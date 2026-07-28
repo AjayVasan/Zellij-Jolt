@@ -17,7 +17,7 @@ _load_theme() {
     # built-in default palette when no theme is configured.
     #
     # Sets these globals: C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN
-    #                     C_ER C_HL FZF_COLORS
+    #                     C_HL C_ITA FZF_COLORS
 
     # ── Helpers for building ANSI 24-bit sequences ──────────────────
     _rgb()  { printf '\e[38;2;%s;%s;%sm' "$1" "$2" "$3"; }
@@ -123,8 +123,8 @@ _load_theme() {
                 C_ST=$(_rgb $cyan)           # cyan    — status, tab positions
                 C_TN=$(_rgb $fg)             # fg      — tab names
                 C_PN=$(_rgb $white)          # white   — pane info
-                C_ER=$(_rgb $red)            # red     — cancel / error
                 C_HL=$(_rgb $yellow)         # yellow  — highlight
+                C_ITA=$'\e[3m'              # italic
 
                 # Derive brighter bg for fzf bg+ (mix bg + 15%)
                 local br=0 bg_r bg_g bg_b
@@ -173,8 +173,8 @@ preview-fg:$(printf '#%02x%02x%02x' $fg2_r $fg2_g $fg2_b)"
     C_BD=$(_rgb $dgreen);   C_TL=$(_bold_rgb $dfg)
     C_LB=$(_rgb $dfg);      C_VL=$(_rgb $dyellow)
     C_ST=$(_rgb $dcyan);    C_TN=$(_rgb $dfg)
-    C_PN=$(_rgb $dwhite);   C_ER=$(_rgb $dred)
-    C_HL=$(_rgb $dyellow)
+    C_PN=$(_rgb $dwhite)
+    C_HL=$(_rgb $dyellow); C_ITA=$'\e[3m'
     local dbg_r dbg_g dbg_b dfg_r dfg_g dfg_b
     read -r dbg_r dbg_g dbg_b <<< "$dbg"
     read -r dfg_r dfg_g dfg_b <<< "$dfg"
@@ -269,14 +269,13 @@ _box_title()  { printf "${C_BD}  │${C_RESET} ${C_TL}%-44s${C_RESET} ${C_BD}│
 _box_label()  { printf "${C_BD}  │${C_RESET} ${C_LB}%-7s${C_RESET} ${C_VL}%-36s${C_RESET} ${C_BD}│${C_RESET}\n" "$1" "${2:0:36}"; }
 _box_line()   { printf "${C_BD}  │${C_RESET} %-44s ${C_BD}│${C_RESET}\n" "$1"; }
 _box_tab()    { printf "${C_BD}  │${C_RESET}  ${C_ST}%-3s${C_RESET} ${C_TN}%-39s${C_RESET} ${C_BD}│${C_RESET}\n" "$1" "${2:0:39}"; }
-_box_pane()   { printf "${C_BD}  │${C_RESET}  ${C_PN}     └ %-37s${C_RESET} ${C_BD}│${C_RESET}\n" "${1:0:37}"; }
-_box_empty()  { printf "${C_BD}  │${C_RESET} %-44s ${C_BD}│${C_RESET}\n" ""; }
+_box_pane()   { printf "${C_BD}  │${C_RESET}  ${C_PN}     └ %-36s${C_RESET} ${C_BD}│${C_RESET}\n" "${1:0:36}"; }
 
 # ── Preview builder (called from fzf --preview) ────────────────────
 session_preview() {
     local item="$1"
     case "$item" in
-        "── New Tracked ──"|"── New Named ──")
+        "── New Named ──")
             _box_top
             _box_title "+ New Named Session"
             _box_sep
@@ -317,7 +316,10 @@ session_preview() {
 
     # Real session
     local session_info
-    session_info=$(zellij list-sessions -n 2>/dev/null | grep "^${item} " || true)
+    [[ -z "$item" ]] && { printf "${C_HL}  (session not found)${C_RESET}\n"; return; }
+    session_info=$(zellij list-sessions -n 2>/dev/null \
+        | awk -v item="$item" 'index($0, item " [Created") == 1 || index($0, item " (") == 1 {print; exit}' \
+        || true)
     if [[ -z "$session_info" ]]; then
         printf "${C_HL}  (session not found)${C_RESET}\n"
         return
@@ -342,12 +344,15 @@ session_preview() {
         return
     fi
 
-    local tabs=() panes_by_tab=()
+    local tabs=() panes_by_tab=() pos_to_idx=()
     while IFS='|' read -r kind a b; do
         if [[ "$kind" == "tab" ]]; then
+            local new_idx="${#tabs[@]}"
+            pos_to_idx[$a]="$new_idx"
             tabs+=("$a|$b")
         elif [[ "$kind" == "pane" ]]; then
-            panes_by_tab[$a]+="${b}, "
+            local mapped_idx="${pos_to_idx[$a]:-0}"
+            panes_by_tab[$mapped_idx]+="${b}, "
         fi
     done <<< "$meta_output"
 
@@ -384,6 +389,9 @@ session_preview() {
     _box_bot
 }
 
+# ── ANSI helper ──────────────────────────────────────────────────────
+_strip_ansi() { printf '%s' "$1" | sed $'s/\e\\[[0-9;]*m//g'; }
+
 # ── Main ────────────────────────────────────────────────────────────
 main() {
     _load_theme
@@ -391,15 +399,7 @@ main() {
         command -v "$cmd" &>/dev/null || { echo "Error: $cmd required"; exit 1; }
     done
 
-    local sessions
-    sessions=$(zellij list-sessions -s 2>/dev/null || true)
-    local fzf_input=""
-    if [[ -n "$sessions" ]]; then
-        while IFS= read -r s; do
-            [[ -n "$s" ]] && fzf_input+="$s"$'\n'
-        done <<< "$sessions"
-    fi
-    fzf_input+=$'\n''── New Tracked ──'$'\n''── New Untracked ──'$'\n''── Resume ──'$'\n''── Exit ──'
+    local fzf_input="${C_ITA}── New Named ──${C_RESET}"$'\n'"${C_ITA}── New Untracked ──${C_RESET}"$'\n'"${C_ITA}── Resume ──${C_RESET}"$'\n'"${C_ITA}── Exit ──${C_RESET}"
 
     exec < /dev/tty
 
@@ -412,29 +412,30 @@ main() {
               --border=sharp \
               --border-label=' Zellij-Jolt ' \
               --border-label-pos=3 \
-              --header=' Ctrl-n:New  Ctrl-N:Tracked  Ctrl-r:Resume  Esc:Exit' \
+              --header=' Ctrl-n:New  Ctrl-N:Named  Ctrl-r:Resume  Esc:Exit' \
               --header-first \
               --header-border=sharp \
               --color="${FZF_COLORS}" \
               --prompt='🔍 ' \
               --bind='ctrl-n:become(echo "── New Untracked ──")' \
-              --bind='ctrl-N:become(echo "── New Tracked ──")' \
+              --bind='ctrl-N:become(echo "── New Named ──")' \
               --bind='ctrl-r:become(echo "── Resume ──")' \
               --preview="
-                  $(for _v in C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN C_ER C_HL; do printf '%s=%q; ' "$_v" "${!_v}"; done)
-                  item={};
-                  $(declare -f session_preview parse_metadata_file \
-                              _box_top _box_sep _box_bot _box_title \
-                              _box_label _box_line _box_tab _box_pane _box_empty);
-                  session_preview \"\$item\"
-              " \
-              --preview-window='right:60%:border-sharp' \
-              --preview-label=' Session Details ' \
-              --preview-label-pos=3
+                    $(for _v in C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN C_HL C_ITA; do printf '%s=%q; ' "$_v" "${!_v}"; done)
+                    item={};
+                    $(declare -f session_preview parse_metadata_file \
+                                _box_top _box_sep _box_bot _box_title \
+                                _box_label _box_line _box_tab _box_pane);
+                    session_preview \"\$item\"
+                " \
+                --preview-window='right:60%:border-sharp' \
+                --preview-label=' Session Details ' \
+                --preview-label-pos=3
     )
 
+    selected=$(_strip_ansi "$selected")
     case "$selected" in
-        "── New Tracked ──")
+        "── New Named ──")
             echo -n "Session name: "
             read -r session_name
             [[ -z "$session_name" ]] && { echo "Cancelled."; exit 0; }
@@ -445,12 +446,8 @@ main() {
             ;;
         "── Resume ──")
             # Build a detailed session list and run a sub-picker
-            local resume_list=""
-            while IFS= read -r line; do
-                local sname="${line%% *}"
-                local sinfo="${line#* }"
-                resume_list+="${sname}  ${sinfo}"$'\n'
-            done < <(zellij list-sessions -n 2>/dev/null || true)
+            local resume_list
+            resume_list=$(zellij list-sessions -n 2>/dev/null || true)
             if [[ -z "$resume_list" ]]; then
                 printf "${C_HL}  No sessions to resume.${C_RESET}\n"
                 exit 0
@@ -465,11 +462,11 @@ main() {
                     --color="${FZF_COLORS}" \
                     --prompt='🔍 ' \
                     --preview="
-                        $(for _v in C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN C_ER C_HL; do printf '%s=%q; ' "$_v" "${!_v}"; done)
-                        item=\$(echo {} | awk '{print \$1}');
+                        $(for _v in C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN C_HL C_ITA; do printf '%s=%q; ' "$_v" "${!_v}"; done)
+                        item=\$(echo {} | sed 's/ \[Created.*//; s/ (.*//');
                         $(declare -f session_preview parse_metadata_file \
                                     _box_top _box_sep _box_bot _box_title \
-                                    _box_label _box_line _box_tab _box_pane _box_empty);
+                                    _box_label _box_line _box_tab _box_pane);
                         session_preview \"\$item\"
                     " \
                     --preview-window='right:60%:border-sharp' \
@@ -477,7 +474,8 @@ main() {
                     --preview-label-pos=3
             )
             if [[ -n "$chosen" ]]; then
-                local sname="${chosen%%  *}"
+                local sname
+                sname="$(echo "$chosen" | sed 's/ \[Created.*//; s/ (.*//')"
                 exec zellij attach "$sname"
             fi
             exit 0
