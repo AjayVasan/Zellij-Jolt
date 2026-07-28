@@ -5,16 +5,44 @@
 # sessions with fuzzy search, plus options for new sessions. Right preview
 # pane shows session details: tabs, what's running in each, age, status.
 set -euo pipefail
+
+VERSION="1.0.0"
 ZELLIJ_SESSION_DIR="${HOME}/.cache/zellij/contract_version_1/session_info"
 export ZELLIJ_SESSION_DIR
-VERSION="1.0.0"
+
+# ── Gruber Darker theme ────────────────────────────────────────────
+# Mirrors the user's Zellij `gruber-darker` theme exactly.
+#   bg=#181818  fg=#f4f4f4  green=#73d936  cyan=#95a99f
+#   yellow=#ffdd7e  red=#f43841  blue=#96a6c8  magenta=#9e95c7
+C_RESET=$'\e[0m'
+C_BOLD=$'\e[1m'
+C_BD=$'\e[38;2;115;217;54m'          # green   — box borders, structural
+C_TL=$'\e[1;38;2;244;244;244m'       # bold fg — title (session name)
+C_LB=$'\e[38;2;244;244;244m'         # fg      — labels (Age:, Status:, etc.)
+C_VL=$'\e[38;2;255;221;126m'         # yellow  — values (age numbers)
+C_ST=$'\e[38;2;149;169;159m'         # cyan    — status line, tab pos numbers
+C_TN=$'\e[38;2;244;244;244m'         # fg      — tab names
+C_PN=$'\e[38;2;228;228;228m'         # white   — pane info (slightly dimmer)
+C_ER=$'\e[38;2;244;56;65m'           # red     — cancel / error
+C_HL=$'\e[38;2;255;221;126m'         # yellow  — highlight accent
+FZF_COLORS="\
+bg:#181818,bg+:#242424,\
+fg:#e4e4e4,fg+:#f4f4f4,\
+hl:#73d936,hl+:#73d936,\
+gutter:#181818,\
+info:#95a99f,\
+pointer:#73d936,marker:#73d936,\
+spinner:#ffdd7e,\
+header:#505050,\
+prompt:#95a99f,\
+border:#73d936,\
+preview-bg:#101010,preview-fg:#e4e4e4"
 
 # ── State machine parser for session-metadata.kdl ───────────────────
 # Extracts tab names + pane titles from a single KDL file.
 # Output: pipe-separated lines for display.
 #   tab|<position>|<name>
 #   pane|<tab_index>|<title>
-#   age|<creation_minutes>
 parse_metadata_file() {
     local meta_file="${ZELLIJ_SESSION_DIR}/${1}/session-metadata.kdl"
     [[ -f "$meta_file" ]] || return 1
@@ -25,12 +53,10 @@ parse_metadata_file() {
     local line
 
     while IFS= read -r line; do
-        # Trim whitespace
         line="${line#"${line%%[![:space:]]*}"}"
         line="${line%"${line##*[![:space:]]}"}"
         [[ -z "$line" ]] && continue
 
-        # Section tracking
         if [[ "$line" == "tabs {" ]]; then section="tabs"; continue; fi
         if [[ "$line" == "panes {" ]]; then section="panes"; continue; fi
         if [[ "$line" == "}" ]] && [[ "$section" == "tabs" ]] && (( ! in_tab )); then
@@ -76,42 +102,48 @@ parse_metadata_file() {
     done < "$meta_file"
 }
 
+# ── Render helpers (24-bit gruber-darker colors) ────────────────────
+_box_top()    { printf "${C_BD}  ╭──────────────────────────────────────────────╮${C_RESET}\n"; }
+_box_sep()    { printf "${C_BD}  ├──────────────────────────────────────────────┤${C_RESET}\n"; }
+_box_bot()    { printf "${C_BD}  ╰──────────────────────────────────────────────╯${C_RESET}\n"; }
+_box_title()  { printf "${C_BD}  │${C_RESET} ${C_TL}%-44s${C_RESET} ${C_BD}│${C_RESET}\n" "${1:0:44}"; }
+_box_label()  { printf "${C_BD}  │${C_RESET} ${C_LB}%-6s${C_RESET} ${C_VL}%-36s${C_RESET} ${C_BD}│${C_RESET}\n" "$1" "${2:0:36}"; }
+_box_line()   { printf "${C_BD}  │${C_RESET} %-46s ${C_BD}│${C_RESET}\n" "$1"; }
+_box_tab()    { printf "${C_BD}  │${C_RESET}  ${C_ST}%-3s${C_RESET} ${C_TN}%-38s${C_RESET} ${C_BD}│${C_RESET}\n" "$1" "${2:0:38}"; }
+_box_pane()   { printf "${C_BD}  │${C_RESET}  ${C_PN}     └ %-35s${C_RESET} ${C_BD}│${C_RESET}\n" "${1:0:35}"; }
+
 # ── Preview builder (called from fzf --preview) ────────────────────
 session_preview() {
     local item="$1"
 
     case "$item" in
         "── New Untracked ──")
-            printf '\e[0;32m'
-            echo '  ╭──────────────────────────────────────────────╮'
-            printf '  │ \e[1;37m  + New Untracked Session\e[0;32m                   │\n'
-            echo '  ├──────────────────────────────────────────────┤'
-            printf '  │ \e[0;37m  Creates an auto-named Zellij session.\e[0;32m      │\n'
-            printf '  │ \e[0;37m  Zellij generates a random adjective-animal\e[0;32m  │\n'
-            printf '  │ \e[0;37m  name automatically.\e[0;32m                        │\n'
-            echo '  ╰──────────────────────────────────────────────╯'
-            printf '\e[0m'
+            _box_top
+            _box_title "+ New Untracked Session"
+            _box_sep
+            _box_line "Creates an auto-named Zellij session."
+            _box_line "Zellij generates a random adjective-animal"
+            _box_line "name automatically."
+            _box_bot
             return
             ;;
         "── New Named ──")
-            printf '\e[0;32m'
-            echo '  ╭──────────────────────────────────────────────╮'
-            printf '  │ \e[1;37m  + New Named Session\e[0;32m                        │\n'
-            echo '  ├──────────────────────────────────────────────┤'
-            printf '  │ \e[0;37m  Prompts for a custom session name.\e[0;32m          │\n'
-            printf '  │ \e[0;37m  Useful for project-specific sessions.\e[0;32m       │\n'
-            echo '  ╰──────────────────────────────────────────────╯'
-            printf '\e[0m'
+            _box_top
+            _box_title "+ New Named Session"
+            _box_sep
+            _box_line "Prompts for a custom session name."
+            _box_line "Useful for project-specific sessions."
+            _box_bot
             return
             ;;
         "── Cancel ──")
-            printf '\e[0;31m'
+            printf "${C_ER}"
             echo '  ╭──────────────────────────────────────────────╮'
-            printf '  │ \e[1;37m  Cancel\e[0;31m                                    │\n'
+            printf "  │ ${C_BOLD}  Cancel${C_RESET}${C_ER}%-34s${C_ER} │\n" " "
             echo '  ├──────────────────────────────────────────────┤'
-            printf '  │ \e[0;37m  Exits without opening a session.\e[0;31m            │\n'
+            printf '  │  Exits without opening a session.         │\n'
             echo '  ╰──────────────────────────────────────────────╯'
-            printf '\e[0m'
+            printf "${C_RESET}"
             return
             ;;
     esac
@@ -120,34 +152,29 @@ session_preview() {
     local session_info
     session_info=$(zellij list-sessions -n 2>/dev/null | grep "^${item} " || true)
     if [[ -z "$session_info" ]]; then
-        printf '\e[0;33m  (session not found)\e[0m\n'
+        printf "${C_HL}  (session not found)${C_RESET}\n"
         return
     fi
 
-    # Parse age & status
     local age="${session_info#*[Created }"
     age="${age%%]*}"
     local status="ACTIVE"
     [[ "$session_info" == *"(EXITED"* ]] && status="EXITED (resurrect)"
 
-    # Parse metadata
     local meta_output
     meta_output=$(parse_metadata_file "$item" 2>/dev/null || echo "NOCACHE")
+
     if [[ "$meta_output" == "NOCACHE" ]]; then
-        # No cached data — show basic info
-        printf '\e[0;32m'
-        echo '  ╭──────────────────────────────────────────────╮'
-        printf '  │ \e[1;37m%-44s\e[0;32m │\n' "${item:0:44}"
-        echo '  ├──────────────────────────────────────────────┤'
-        printf '  │ \e[0;37mAge:    \e[0;33m%-36s\e[0;32m │\n' "${age:0:36}"
-        printf '  │ \e[0;37mStatus: \e[0;36m%-36s\e[0;32m │\n' "${status:0:36}"
-        printf '  │ \e[0;37mTabs:   \e[0;33m%-36s\e[0;32m │\n' "(no cached data)"
-        echo '  ╰──────────────────────────────────────────────╯'
-        printf '\e[0m'
+        _box_top
+        _box_title "$item"
+        _box_sep
+        _box_label "Age:"    "$age"
+        _box_label "Status:" "$status"
+        _box_label "Tabs:"   "(no cached data)"
+        _box_bot
         return
     fi
 
-    # Collect tabs and panes
     local tabs=() panes_by_tab=()
     while IFS='|' read -r kind a b; do
         if [[ "$kind" == "tab" ]]; then
@@ -159,39 +186,35 @@ session_preview() {
 
     local tab_count="${#tabs[@]}"
 
-    # Render
-    printf '\e[0;32m'
-    echo '  ╭──────────────────────────────────────────────╮'
-    printf '  │ \e[1;37m%-44s\e[0;32m │\n' "${item:0:44}"
-    echo '  ├──────────────────────────────────────────────┤'
-    printf '  │ \e[0;37mAge:    \e[0;33m%-36s\e[0;32m │\n' "${age:0:36}"
-    printf '  │ \e[0;37mStatus: \e[0;36m%-36s\e[0;32m │\n' "${status:0:36}"
-    printf '  │ \e[0;37mTabs:   \e[0;33m%-36s\e[0;32m │\n' "$tab_count"
-    echo '  ├──────────────────────────────────────────────┤'
+    _box_top
+    _box_title "$item"
+    _box_sep
+    _box_label "Age:"    "$age"
+    _box_label "Status:" "$status"
+    _box_label "Tabs:"   "$tab_count"
+    _box_sep
 
     if (( tab_count == 0 )); then
-        printf '  │ \e[0;37m  No tabs yet\e[0;32m                              │\n'
+        _box_line "  No tabs yet"
     else
         local idx=0
         for tab_entry in "${tabs[@]}"; do
             local pos="${tab_entry%%|*}"
             local name="${tab_entry#*|}"
-            # Get pane for this tab
             local pane_info="${panes_by_tab[$idx]:-}"
             pane_info="${pane_info%, }"
             if [[ -n "$pane_info" ]]; then
                 pane_info="${pane_info:0:30}"
-                printf '  │  \e[0;36m%-3s\e[0;37m %-38s\e[0;32m │\n' "${pos}." "${name:0:38}"
-                printf '  │  \e[0;37m     └ %-35s\e[0;32m │\n' "${pane_info:0:35}"
+                _box_tab "${pos}." "${name}"
+                _box_pane "${pane_info}"
             else
-                printf '  │  \e[0;36m%-3s\e[0;37m %-38s\e[0;32m │\n' "${pos}." "${name:0:38}"
+                _box_tab "${pos}." "${name}"
             fi
             idx=$((idx+1))
         done
     fi
 
-    echo '  ╰──────────────────────────────────────────────╯'
-    printf '\e[0m'
+    _box_bot
 }
 
 # ── Main ────────────────────────────────────────────────────────────
@@ -200,7 +223,6 @@ main() {
         command -v "$cmd" &>/dev/null || { echo "Error: $cmd required"; exit 1; }
     done
 
-    # Build input for fzf
     local sessions
     sessions=$(zellij list-sessions -s 2>/dev/null || true)
     local fzf_input=""
@@ -211,7 +233,6 @@ main() {
     fi
     fzf_input+='── New Untracked ──'$'\n''── New Named ──'$'\n''── Cancel ──'
 
-    # Ensure TTY stdin for fzf interaction
     exec < /dev/tty
 
     local selected
@@ -226,16 +247,15 @@ main() {
               --header=' Ctrl-n:New Untracked  Ctrl-N:New Named  Esc:Cancel' \
               --header-first \
               --header-border=sharp \
-              --color='bg:#1a1a2e,bg+:#16213e,fg:#d3d7cf,fg+:#ffffff,hl:#4e9a06,hl+:#8ae234' \
-              --color='gutter:#1a1a2e,info:#06989a,pointer:#4e9a06,marker:#4e9a06,spinner:#c4a000' \
-              --color='header:#555753,prompt:#06989a,border:#4e9a06' \
-              --color='preview-bg:#0f0f1a,preview-fg:#d3d7cf' \
+              --color="${FZF_COLORS}" \
               --prompt='🔍 ' \
               --bind='ctrl-n:become(echo "── New Untracked ──")' \
               --bind='ctrl-N:become(echo "── New Named ──")' \
               --preview="
                   item={};
-                  $(declare -f session_preview parse_metadata_file);
+                  $(declare -f session_preview parse_metadata_file \
+                              _box_top _box_sep _box_bot _box_title \
+                              _box_label _box_line _box_tab _box_pane);
                   session_preview \"\$item\"
               " \
               --preview-window='right:60%:border-sharp' \
