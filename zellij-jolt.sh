@@ -10,33 +10,190 @@ VERSION="1.0.0"
 ZELLIJ_SESSION_DIR="${HOME}/.cache/zellij/contract_version_1/session_info"
 export ZELLIJ_SESSION_DIR
 
-# ── Gruber Darker theme ────────────────────────────────────────────
-# Mirrors the user's Zellij `gruber-darker` theme exactly.
-#   bg=#181818  fg=#f4f4f4  green=#73d936  cyan=#95a99f
-#   yellow=#ffdd7e  red=#f43841  blue=#96a6c8  magenta=#9e95c7
-C_RESET=$'\e[0m'
-C_BOLD=$'\e[1m'
-C_BD=$'\e[38;2;115;217;54m'          # green   — box borders, structural
-C_TL=$'\e[1;38;2;244;244;244m'       # bold fg — title (session name)
-C_LB=$'\e[38;2;244;244;244m'         # fg      — labels (Age:, Status:, etc.)
-C_VL=$'\e[38;2;255;221;126m'         # yellow  — values (age numbers)
-C_ST=$'\e[38;2;149;169;159m'         # cyan    — status line, tab pos numbers
-C_TN=$'\e[38;2;244;244;244m'         # fg      — tab names
-C_PN=$'\e[38;2;228;228;228m'         # white   — pane info (slightly dimmer)
-C_ER=$'\e[38;2;244;56;65m'           # red     — cancel / error
-C_HL=$'\e[38;2;255;221;126m'         # yellow  — highlight accent
-FZF_COLORS="\
-bg:#181818,bg+:#242424,\
-fg:#e4e4e4,fg+:#f4f4f4,\
-hl:#73d936,hl+:#73d936,\
-gutter:#181818,\
-info:#95a99f,\
-pointer:#73d936,marker:#73d936,\
-spinner:#ffdd7e,\
+_load_theme() {
+    # Reads the active Zellij theme from config.kdl and sets color variables.
+    # Works for any theme defined inline (themes { name { ... } }) or in
+    # an external <theme_dir>/<name>.kdl file. Falls back to Zellij's
+    # built-in default palette when no theme is configured.
+    #
+    # Sets these globals: C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN
+    #                     C_ER C_HL FZF_COLORS
+
+    # ── Helpers for building ANSI 24-bit sequences ──────────────────
+    _rgb()  { printf '\e[38;2;%s;%s;%sm' "$1" "$2" "$3"; }
+    _bold_rgb() { printf '\e[1;38;2;%s;%s;%sm' "$1" "$2" "$3"; }
+
+    # ── Default fallback palette (Zellij's built-in default) ────────
+    # When no theme is configured, Zellij uses the terminal's default
+    # color palette (indexed 0-15). We approximate with a neutral dark
+    # scheme matching the commented-out defaults in --dump-config.
+    local dfg="248 248 242" dbg="40 42 54"
+    local dred="255 85 85"  dgreen="80 250 123"
+    local dyellow="241 250 140" dblue="98 114 164"
+    local dmagenta="255 121 198" dorange="255 184 108"
+    local dcyan="139 233 253"    dblack="0 0 0"
+    local dwhite="255 255 255"
+    local config_file theme_name theme_dir all_lines i line
+    declare -gA _raw=()
+    config_file="${ZELLIJ_CONFIG_FILE:-$HOME/.config/zellij/config.kdl}"
+
+    if [[ -f "$config_file" ]]; then
+        # Read config, strip comments, store non-empty lines
+        mapfile -t all_lines < <(
+            while IFS= read -r raw || [[ -n "$raw" ]]; do
+                local trimmed="${raw%%//*}"
+                trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
+                trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+                [[ -z "$trimmed" ]] && continue
+                printf '%s\n' "$trimmed"
+            done < "$config_file"
+        )
+
+        # ── Pass 1: find theme_name, theme_dir ─────────────────────
+        for line in "${all_lines[@]}"; do
+            if [[ "$line" == theme\ \"*\" ]]; then
+                theme_name="${line#*\"}"; theme_name="${theme_name%%\"*}"
+            elif [[ "$line" == theme\ * ]]; then
+                theme_name="${line#theme }"
+            fi
+            if [[ "$line" == theme_dir\ \"*\" ]]; then
+                theme_dir="${line#*\"}"; theme_dir="${theme_dir%%\"*}"
+            fi
+        done
+
+        # ── Pass 2: find matching theme block and extract colors ───
+        if [[ -n "$theme_name" && "$theme_name" != "default" ]]; then
+            local in_themes=0 in_this=0 found=0
+            for line in "${all_lines[@]}"; do
+                if [[ "$in_themes" == 0 && "$line" == "themes {" ]]; then
+                    in_themes=1; continue
+                fi
+                if [[ "$in_themes" == 1 && "$line" == "}" ]]; then
+                    if [[ "$found" == 1 ]]; then break; fi
+                    in_themes=0; continue
+                fi
+                [[ "$in_themes" == 0 ]] && continue
+
+                # Inside themes: find matching name block
+                if [[ "$line" == *"{"* ]] && [[ "$line" != "}" ]]; then
+                    local cand="${line%\{*}"
+                    cand="${cand%"${cand##*[![:space:]]}"}"
+                    in_this=0
+                    if [[ "$cand" == "$theme_name" ]]; then
+                        in_this=1; found=1
+                    fi
+                    continue
+                fi
+                if [[ "$line" == "}" ]]; then
+                    in_this=0; continue
+                fi
+
+                if [[ "$in_this" == 1 ]]; then
+                    local cname _cr _cg _cb
+                    read -r cname _cr _cg _cb <<< "$line"
+                    if [[ -n "$cname" && -n "${_cr:-}" && -n "${_cg:-}" && -n "${_cb:-}" ]]; then
+                        _raw["$cname"]="${_cr} ${_cg} ${_cb}"
+                    fi
+                fi
+            done
+        fi
+    fi
+
+    # ── Apply colors ─────────────────────────────────────────────
+    if [[ ${#_raw[@]} -gt 0 ]]; then
+
+        # If we have a theme name, apply its colors
+        if [[ -n "$theme_name" && "$theme_name" != "default" ]]; then
+            if [[ ${#_raw[@]} -gt 0 ]]; then
+                # Map colors from the parsed theme
+                local fg="${_raw[fg]:-$dfg}"   bg="${_raw[bg]:-$dbg}"
+                local red="${_raw[red]:-$dred}" green="${_raw[green]:-$dgreen}"
+                local yellow="${_raw[yellow]:-$dyellow}" blue="${_raw[blue]:-$dblue}"
+                local magenta="${_raw[magenta]:-$dmagenta}" orange="${_raw[orange]:-$dorange}"
+                local cyan="${_raw[cyan]:-$dcyan}" black="${_raw[black]:-$dblack}"
+                local white="${_raw[white]:-$dwhite}"
+
+
+                # Build final color variables
+                C_RESET=$'\e[0m'; C_BOLD=$'\e[1m'
+                C_BD=$(_rgb $green)          # green   — box borders, structural
+                C_TL=$(_bold_rgb $fg)        # bold fg — title
+                C_LB=$(_rgb $fg)             # fg      — labels
+                C_VL=$(_rgb $yellow)         # yellow  — values
+                C_ST=$(_rgb $cyan)           # cyan    — status, tab positions
+                C_TN=$(_rgb $fg)             # fg      — tab names
+                C_PN=$(_rgb $white)          # white   — pane info
+                C_ER=$(_rgb $red)            # red     — cancel / error
+                C_HL=$(_rgb $yellow)         # yellow  — highlight
+
+                # Derive brighter bg for fzf bg+ (mix bg + 15%)
+                local br=0 bg_r bg_g bg_b
+                read -r bg_r bg_g bg_b <<< "$bg"
+                br=$(( bg_r + (255 - bg_r) * 15 / 100 ))
+                local bg_r2=$br
+                br=$(( bg_g + (255 - bg_g) * 15 / 100 ))
+                local bg_g2=$br
+                br=$(( bg_b + (255 - bg_b) * 15 / 100 ))
+                local bg_b2=$br
+
+                # Derive slightly dimmer fg for fzf
+                local fg_r fg_g fg_b
+                read -r fg_r fg_g fg_b <<< "$fg"
+                br=$(( fg_r * 9 / 10 ))
+                local fg2_r=$br
+                br=$(( fg_g * 9 / 10 ))
+                local fg2_g=$br
+                br=$(( fg_b * 9 / 10 ))
+                local fg2_b=$br
+
+                FZF_COLORS="\
+bg:$(printf '#%02x%02x%02x' $bg_r $bg_g $bg_b),\
+bg+:$(printf '#%02x%02x%02x' $bg_r2 $bg_g2 $bg_b2),\
+fg:$(printf '#%02x%02x%02x' $fg2_r $fg2_g $fg2_b),\
+fg+:$(printf '#%02x%02x%02x' $fg_r $fg_g $fg_b),\
+hl:$(printf '#%02x%02x%02x' $green),\
+hl+:$(printf '#%02x%02x%02x' $green),\
+gutter:$(printf '#%02x%02x%02x' $bg_r $bg_g $bg_b),\
+info:$(printf '#%02x%02x%02x' $cyan),\
+pointer:$(printf '#%02x%02x%02x' $green),\
+marker:$(printf '#%02x%02x%02x' $green),\
+spinner:$(printf '#%02x%02x%02x' $yellow),\
 header:#505050,\
-prompt:#95a99f,\
-border:#73d936,\
-preview-bg:#101010,preview-fg:#e4e4e4"
+prompt:$(printf '#%02x%02x%02x' $cyan),\
+border:$(printf '#%02x%02x%02x' $green),\
+preview-bg:$(printf '#%02x%02x%02x' $bg_r $bg_g $bg_b),\
+preview-fg:$(printf '#%02x%02x%02x' $fg2_r $fg2_g $fg2_b)"
+                return
+            fi
+        fi
+    fi
+
+    # Fallback — use default palette
+    C_RESET=$'\e[0m'; C_BOLD=$'\e[1m'
+    C_BD=$(_rgb $dgreen);   C_TL=$(_bold_rgb $dfg)
+    C_LB=$(_rgb $dfg);      C_VL=$(_rgb $dyellow)
+    C_ST=$(_rgb $dcyan);    C_TN=$(_rgb $dfg)
+    C_PN=$(_rgb $dwhite);   C_ER=$(_rgb $dred)
+    C_HL=$(_rgb $dyellow)
+    local dbg_r dbg_g dbg_b dfg_r dfg_g dfg_b
+    read -r dbg_r dbg_g dbg_b <<< "$dbg"
+    read -r dfg_r dfg_g dfg_b <<< "$dfg"
+    FZF_COLORS="\
+bg:#282a36,bg+:#363849,\
+fg:#e4e4e4,fg+:#f8f8f2,\
+hl:$(printf '#%02x%02x%02x' $dgreen),\
+hl+:$(printf '#%02x%02x%02x' $dgreen),\
+gutter:#282a36,\
+info:$(printf '#%02x%02x%02x' $dcyan),\
+pointer:$(printf '#%02x%02x%02x' $dgreen),\
+marker:$(printf '#%02x%02x%02x' $dgreen),\
+spinner:$(printf '#%02x%02x%02x' $dyellow),\
+header:#505050,\
+prompt:$(printf '#%02x%02x%02x' $dcyan),\
+border:$(printf '#%02x%02x%02x' $dgreen),\
+preview-bg:#282a36,\
+preview-fg:#e4e4e4"
+}
 
 # ── State machine parser for session-metadata.kdl ───────────────────
 # Extracts tab names + pane titles from a single KDL file.
@@ -229,6 +386,7 @@ session_preview() {
 
 # ── Main ────────────────────────────────────────────────────────────
 main() {
+    _load_theme
     for cmd in zellij fzf; do
         command -v "$cmd" &>/dev/null || { echo "Error: $cmd required"; exit 1; }
     done
@@ -263,6 +421,7 @@ main() {
               --bind='ctrl-N:become(echo "── New Tracked ──")' \
               --bind='ctrl-r:become(echo "── Resume ──")' \
               --preview="
+                  $(for _v in C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN C_ER C_HL; do printf '%s=%q; ' "$_v" "${!_v}"; done)
                   item={};
                   $(declare -f session_preview parse_metadata_file \
                               _box_top _box_sep _box_bot _box_title \
@@ -306,6 +465,7 @@ main() {
                     --color="${FZF_COLORS}" \
                     --prompt='🔍 ' \
                     --preview="
+                        $(for _v in C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN C_ER C_HL; do printf '%s=%q; ' "$_v" "${!_v}"; done)
                         item=\$(echo {} | awk '{print \$1}');
                         $(declare -f session_preview parse_metadata_file \
                                     _box_top _box_sep _box_bot _box_title \
