@@ -102,48 +102,58 @@ parse_metadata_file() {
     done < "$meta_file"
 }
 
-# ── Render helpers (24-bit gruber-darker colors) ────────────────────
+# ── Render helpers — all produce exactly 46 chars between │...│ ──────
+# Inner width = 46 (matches the 46 ─ chars in the border line).
+# Every helper pads/truncates to fill exactly 46 visible chars.
 _box_top()    { printf "${C_BD}  ╭──────────────────────────────────────────────╮${C_RESET}\n"; }
 _box_sep()    { printf "${C_BD}  ├──────────────────────────────────────────────┤${C_RESET}\n"; }
 _box_bot()    { printf "${C_BD}  ╰──────────────────────────────────────────────╯${C_RESET}\n"; }
 _box_title()  { printf "${C_BD}  │${C_RESET} ${C_TL}%-44s${C_RESET} ${C_BD}│${C_RESET}\n" "${1:0:44}"; }
-_box_label()  { printf "${C_BD}  │${C_RESET} ${C_LB}%-6s${C_RESET} ${C_VL}%-36s${C_RESET} ${C_BD}│${C_RESET}\n" "$1" "${2:0:36}"; }
-_box_line()   { printf "${C_BD}  │${C_RESET} %-46s ${C_BD}│${C_RESET}\n" "$1"; }
-_box_tab()    { printf "${C_BD}  │${C_RESET}  ${C_ST}%-3s${C_RESET} ${C_TN}%-38s${C_RESET} ${C_BD}│${C_RESET}\n" "$1" "${2:0:38}"; }
-_box_pane()   { printf "${C_BD}  │${C_RESET}  ${C_PN}     └ %-35s${C_RESET} ${C_BD}│${C_RESET}\n" "${1:0:35}"; }
+_box_label()  { printf "${C_BD}  │${C_RESET} ${C_LB}%-7s${C_RESET} ${C_VL}%-36s${C_RESET} ${C_BD}│${C_RESET}\n" "$1" "${2:0:36}"; }
+_box_line()   { printf "${C_BD}  │${C_RESET} %-44s ${C_BD}│${C_RESET}\n" "$1"; }
+_box_tab()    { printf "${C_BD}  │${C_RESET}  ${C_ST}%-3s${C_RESET} ${C_TN}%-39s${C_RESET} ${C_BD}│${C_RESET}\n" "$1" "${2:0:39}"; }
+_box_pane()   { printf "${C_BD}  │${C_RESET}  ${C_PN}     └ %-37s${C_RESET} ${C_BD}│${C_RESET}\n" "${1:0:37}"; }
+_box_empty()  { printf "${C_BD}  │${C_RESET} %-44s ${C_BD}│${C_RESET}\n" ""; }
 
 # ── Preview builder (called from fzf --preview) ────────────────────
 session_preview() {
     local item="$1"
-
     case "$item" in
+        "── New Tracked ──"|"── New Named ──")
+            _box_top
+            _box_title "+ New Named Session"
+            _box_sep
+            _box_line "Prompts for a custom session name via"
+            _box_line "terminal input, then creates a Zellij"
+            _box_line "session with that name."
+            _box_bot
+            return
+            ;;
         "── New Untracked ──")
             _box_top
             _box_title "+ New Untracked Session"
             _box_sep
             _box_line "Creates an auto-named Zellij session."
-            _box_line "Zellij generates a random adjective-animal"
-            _box_line "name automatically."
+            _box_line "Zellij generates a random adjective-"
+            _box_line "animal name like 'funky-sloth'."
             _box_bot
             return
             ;;
-        "── New Named ──")
+        "── Resume ──")
             _box_top
-            _box_title "+ New Named Session"
+            _box_title "→ Resume Session"
             _box_sep
-            _box_line "Prompts for a custom session name."
-            _box_line "Useful for project-specific sessions."
+            _box_line "Lists all sessions with their age and"
+            _box_line "tab count. Select one to attach."
             _box_bot
             return
             ;;
-        "── Cancel ──")
-            printf "${C_ER}"
-            echo '  ╭──────────────────────────────────────────────╮'
-            printf "  │ ${C_BOLD}  Cancel${C_RESET}${C_ER}%-34s${C_ER} │\n" " "
-            echo '  ├──────────────────────────────────────────────┤'
-            printf '  │  Exits without opening a session.         │\n'
-            echo '  ╰──────────────────────────────────────────────╯'
-            printf "${C_RESET}"
+        "── Exit ──"|"── Cancel ──")
+            _box_top
+            _box_title "Exit"
+            _box_sep
+            _box_line "Closes the picker and exits."
+            _box_bot
             return
             ;;
     esac
@@ -231,7 +241,7 @@ main() {
             [[ -n "$s" ]] && fzf_input+="$s"$'\n'
         done <<< "$sessions"
     fi
-    fzf_input+='── New Untracked ──'$'\n''── New Named ──'$'\n''── Cancel ──'
+    fzf_input+=$'\n''── New Tracked ──'$'\n''── New Untracked ──'$'\n''── Resume ──'$'\n''── Exit ──'
 
     exec < /dev/tty
 
@@ -244,18 +254,19 @@ main() {
               --border=sharp \
               --border-label=' Zellij-Jolt ' \
               --border-label-pos=3 \
-              --header=' Ctrl-n:New Untracked  Ctrl-N:New Named  Esc:Cancel' \
+              --header=' Ctrl-n:New  Ctrl-N:Tracked  Ctrl-r:Resume  Esc:Exit' \
               --header-first \
               --header-border=sharp \
               --color="${FZF_COLORS}" \
               --prompt='🔍 ' \
               --bind='ctrl-n:become(echo "── New Untracked ──")' \
-              --bind='ctrl-N:become(echo "── New Named ──")' \
+              --bind='ctrl-N:become(echo "── New Tracked ──")' \
+              --bind='ctrl-r:become(echo "── Resume ──")' \
               --preview="
                   item={};
                   $(declare -f session_preview parse_metadata_file \
                               _box_top _box_sep _box_bot _box_title \
-                              _box_label _box_line _box_tab _box_pane);
+                              _box_label _box_line _box_tab _box_pane _box_empty);
                   session_preview \"\$item\"
               " \
               --preview-window='right:60%:border-sharp' \
@@ -264,16 +275,54 @@ main() {
     )
 
     case "$selected" in
-        "── New Untracked ──")
-            exec zellij
-            ;;
-        "── New Named ──")
+        "── New Tracked ──")
             echo -n "Session name: "
             read -r session_name
             [[ -z "$session_name" ]] && { echo "Cancelled."; exit 0; }
             exec zellij -s "$session_name"
             ;;
-        "── Cancel ──"|"")
+        "── New Untracked ──")
+            exec zellij
+            ;;
+        "── Resume ──")
+            # Build a detailed session list and run a sub-picker
+            local resume_list=""
+            while IFS= read -r line; do
+                local sname="${line%% *}"
+                local sinfo="${line#* }"
+                resume_list+="${sname}  ${sinfo}"$'\n'
+            done < <(zellij list-sessions -n 2>/dev/null || true)
+            if [[ -z "$resume_list" ]]; then
+                printf "${C_HL}  No sessions to resume.${C_RESET}\n"
+                exit 0
+            fi
+            local chosen
+            chosen=$(
+                echo "$resume_list" | fzf --ansi \
+                    --layout=reverse --info=inline \
+                    --border=sharp \
+                    --border-label=' Resume Session ' \
+                    --border-label-pos=3 \
+                    --color="${FZF_COLORS}" \
+                    --prompt='🔍 ' \
+                    --preview="
+                        item=\$(echo {} | awk '{print \$1}');
+                        $(declare -f session_preview parse_metadata_file \
+                                    _box_top _box_sep _box_bot _box_title \
+                                    _box_label _box_line _box_tab _box_pane _box_empty);
+                        session_preview \"\$item\"
+                    " \
+                    --preview-window='right:60%:border-sharp' \
+                    --preview-label=' Session Details ' \
+                    --preview-label-pos=3
+            )
+            if [[ -n "$chosen" ]]; then
+                local sname="${chosen%%  *}"
+                exec zellij attach "$sname"
+            fi
+            exit 0
+            ;;
+        "── Exit ──"|"── Cancel ──"|"")
             exit 0
             ;;
         *)
