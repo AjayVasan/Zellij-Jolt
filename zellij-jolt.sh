@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# zellij-launcher — Zellij session picker with fzf
+# zellij-jolt — Jolt into your Zellij sessions
 #
 # Launched by Alacritty (via shell config or -e flag). Shows existing Zellij
 # sessions with fuzzy search, plus options for new sessions. Right preview
@@ -242,7 +242,7 @@ main() {
               --layout=reverse \
               --info=inline \
               --border=sharp \
-              --border-label=' Zellij Session Launcher ' \
+              --border-label=' Zellij-Jolt ' \
               --border-label-pos=3 \
               --header=' Ctrl-n:New Untracked  Ctrl-N:New Named  Esc:Cancel' \
               --header-first \
