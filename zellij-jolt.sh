@@ -389,8 +389,14 @@ session_preview() {
     _box_bot
 }
 
-# ── ANSI helper ──────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────
 _strip_ansi() { printf '%s' "$1" | sed $'s/\e\\[[0-9;]*m//g'; }
+_extract_name() {
+    local line="$1"
+    # Strip trailing " [Created ...]" or " (...)" suffix
+    line="${line%% [*}"
+    printf '%s' "${line%% (*}"
+}
 
 # ── Main ────────────────────────────────────────────────────────────
 main() {
@@ -403,94 +409,99 @@ main() {
 
     exec < /dev/tty
 
-    local selected
-    selected=$(
-        echo "$fzf_input" \
-        | fzf --ansi \
-              --layout=reverse \
-              --info=inline \
-              --border=sharp \
-              --border-label=' Zellij-Jolt ' \
-              --border-label-pos=3 \
-              --header=' Ctrl-n:New  Ctrl-N:Named  Ctrl-r:Resume  Esc:Exit' \
-              --header-first \
-              --header-border=sharp \
-              --color="${FZF_COLORS}" \
-              --prompt='🔍 ' \
-              --bind='ctrl-n:become(echo "── New Untracked ──")' \
-              --bind='ctrl-N:become(echo "── New Named ──")' \
-              --bind='ctrl-r:become(echo "── Resume ──")' \
-              --preview="
-                    $(for _v in C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN C_HL C_ITA; do printf '%s=%q; ' "$_v" "${!_v}"; done)
-                    item={};
-                    $(declare -f session_preview parse_metadata_file \
-                                _box_top _box_sep _box_bot _box_title \
-                                _box_label _box_line _box_tab _box_pane);
-                    session_preview \"\$item\"
-                " \
-                --preview-window='right:60%:border-sharp' \
-                --preview-label=' Session Details ' \
-                --preview-label-pos=3
-    )
-
-    selected=$(_strip_ansi "$selected")
-    case "$selected" in
-        "── New Named ──")
-            echo -n "Session name: "
-            read -r session_name
-            [[ -z "$session_name" ]] && { echo "Cancelled."; exit 0; }
-            exec zellij -s "$session_name"
-            ;;
-        "── New Untracked ──")
-            exec zellij
-            ;;
-        "── Resume ──")
-            # Build a detailed session list and run a sub-picker
-            local resume_list
-            resume_list=$(zellij list-sessions -n 2>/dev/null || true)
-            if [[ -z "$resume_list" ]]; then
-                printf "${C_HL}  No sessions to resume.${C_RESET}\n"
-                exit 0
-            fi
-            local chosen
-            chosen=$(
-                echo "$resume_list" | fzf --ansi \
-                    --layout=reverse --info=inline \
-                    --border=sharp \
-                    --border-label=' Resume Session ' \
-                    --border-label-pos=3 \
-                    --color="${FZF_COLORS}" \
-                    --prompt='🔍 ' \
-                    --preview="
+    while true; do
+        local selected
+        selected=$(
+            echo "$fzf_input" \
+            | fzf --ansi \
+                  --layout=reverse \
+                  --info=inline \
+                  --border=sharp \
+                  --border-label=' Zellij-Jolt ' \
+                  --border-label-pos=3 \
+                  --header=' Ctrl-n:New  Ctrl-N:Named  Ctrl-r:Resume  Esc:Exit' \
+                  --header-first \
+                  --header-border=sharp \
+                  --color="${FZF_COLORS}" \
+                  --prompt='🔍 ' \
+                  --bind='ctrl-n:become(echo "── New Untracked ──")' \
+                  --bind='ctrl-N:become(echo "── New Named ──")' \
+                  --bind='ctrl-r:become(echo "── Resume ──")' \
+                  --preview="
                         $(for _v in C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN C_HL C_ITA; do printf '%s=%q; ' "$_v" "${!_v}"; done)
-                        item=\$(echo {} | sed 's/ \[Created.*//; s/ (.*//');
+                        item={};
                         $(declare -f session_preview parse_metadata_file \
                                     _box_top _box_sep _box_bot _box_title \
                                     _box_label _box_line _box_tab _box_pane);
                         session_preview \"\$item\"
                     " \
-                    --preview-window='right:60%:border-sharp' \
-                    --preview-label=' Session Details ' \
-                    --preview-label-pos=3
-            )
-            if [[ -n "$chosen" ]]; then
-                local sname
-                sname="$(echo "$chosen" | sed 's/ \[Created.*//; s/ (.*//')"
-                exec zellij attach "$sname"
-            fi
-            exit 0
-            ;;
-        "── Exit ──"|"── Cancel ──"|"")
-            exit 0
-            ;;
-        *)
-            if zellij list-sessions -s 2>/dev/null | grep -qxF "$selected"; then
-                exec zellij attach "$selected"
-            else
-                exec zellij attach "$selected" 2>/dev/null || exec zellij -s "$selected"
-            fi
-            ;;
-    esac
+                  --preview-window='right:60%:border-sharp' \
+                  --preview-label=' Session Details ' \
+                  --preview-label-pos=3
+        )
+
+        selected=$(_strip_ansi "$selected")
+        case "$selected" in
+            "── New Named ──")
+                echo -n "Session name: "
+                read -r session_name
+                [[ -z "$session_name" ]] && { echo "Cancelled."; continue; }
+                exec zellij -s "$session_name"
+                ;;
+            "── New Untracked ──")
+                exec zellij
+                ;;
+            "── Resume ──")
+                # Build a detailed session list and run a sub-picker
+                local resume_list
+                resume_list=$(zellij list-sessions -n 2>/dev/null || true)
+                if [[ -z "$resume_list" ]]; then
+                    printf "${C_HL}  No sessions to resume.${C_RESET}\n"
+                    continue
+                fi
+                local chosen
+                chosen=$(
+                    echo "$resume_list" | fzf --ansi \
+                        --layout=reverse --info=inline \
+                        --border=sharp \
+                        --border-label=' Resume Session ' \
+                        --border-label-pos=3 \
+                        --color="${FZF_COLORS}" \
+                        --prompt='🔍 ' \
+                        --preview="
+                            $(for _v in C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN C_HL C_ITA; do printf '%s=%q; ' "$_v" "${!_v}"; done)
+                            item=\$(_extract_name '{}');
+                            $(declare -f session_preview parse_metadata_file \
+                                        _box_top _box_sep _box_bot _box_title \
+                                        _box_label _box_line _box_tab _box_pane \
+                                        _extract_name);
+                            session_preview \"\$item\"
+                        " \
+                        --preview-window='right:60%:border-sharp' \
+                        --preview-label=' Session Details ' \
+                        --preview-label-pos=3
+                )
+                if [[ -n "$chosen" ]]; then
+                    local sname
+                    sname=$(_extract_name "$chosen")
+                    exec zellij attach "$sname"
+                fi
+                # Esc / no selection → back to main picker
+                continue
+                ;;
+            "── Exit ──"|"── Cancel ──"|"")
+                exit 0
+                ;;
+            *)
+                if zellij list-sessions -s 2>/dev/null | grep -qxF "$selected"; then
+                    exec zellij attach "$selected"
+                else
+                    exec zellij attach "$selected" 2>/dev/null || exec zellij -s "$selected"
+                fi
+                ;;
+        esac
+        break
+    done
 }
 
 main "$@"
