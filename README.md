@@ -2,7 +2,7 @@
 
 **Jolt into your Zellij sessions — fuzzy picker, live preview, instant attach.**
 
-A single `bash` script that replaces your terminal's raw shell with a fuzzy Zellij session picker. Opens an `fzf` TUI showing all existing sessions with a live preview pane on the right — tab names, what's running in each, age, status. Three actions: attach an existing session, spawn a new auto-named one, or create a named session. Works as a drop-in Alacritty `shell` or via `-e` flag.
+A single `bash` script that replaces your terminal's raw shell with a fuzzy Zellij session picker. Opens an `fzf` TUI with four actions and a live preview pane on the right — tab names, what's running in each, age, status. Actions: create a named session, create an auto-named session, resume an existing session via a fuzzy sub-picker, or exit. Works as a drop-in Alacritty `shell` or via `-e` flag.
 
 Reads Zellij's own on-disk cache — zero config. Renders in your exact Zellij theme colors (gruber-darker by default).
 
@@ -26,17 +26,18 @@ Before doing anything, verifies `zellij` and `fzf` are on `PATH`. Exits with an 
 
 ### Session list (lines 226–234)
 
-Calls `zellij list-sessions -s` which prints just the session names, one per line (no age, no formatting). These names form the first entries in fzf's input list. Then three special entries are appended:
+The main picker shows exactly four action entries — no session names are listed on the main page. Sessions appear only in the Resume sub-picker.
 
 ```
-── New Untracked ──
 ── New Named ──
-── Cancel ──
+── New Untracked ──
+── Resume ──
+── Exit ──
 ```
 
-The `──` wrappers visually separate actions from real session names and prevent name collisions (no real Zellij session is named `── New Untracked ──`).
+The `──` wrappers visually separate actions from real session names and prevent name collisions (no real Zellij session is named `── New Named ──`).
 
-If no sessions exist, the list starts directly with the three options — fzf handles an empty session list gracefully.
+Selecting `── Resume ──` opens a sub-picker that lists all existing Zellij sessions with their creation time and status. The sub-picker supports fuzzy search — type to filter sessions instantly. A live preview on the right shows detailed session info: tab names, pane titles, age, and status.
 
 ### The fzf picker (lines 238–264)
 
@@ -118,10 +119,10 @@ The `case` statement maps fzf's output to a Zellij command:
 
 | fzf output | Action |
 |---|---|
-| `── New Untracked ──` | `exec zellij` — creates a random animal-name session |
 | `── New Named ──` | prompts for name → `exec zellij -s "$name"` |
-| `── Cancel ──` or empty | `exit 0` — closes the terminal |
-| Any session name | `zellij attach "$name"` if it exists, else `zellij -s "$name"` |
+| `── New Untracked ──` | `exec zellij` — creates a random animal-name session |
+| `── Resume ──` | opens a sub-picker with fuzzy search → `exec zellij attach <session>` |
+| `── Exit ──` or empty | `exit 0` — closes the terminal |
 
 `exec` replaces the script process with zellij — no zombie processes, clean process tree.
 
@@ -238,7 +239,7 @@ Remove Alacritty `[terminal] shell` line if you added one, and delete the GNOME 
 ## File structure
 
 ```
-zellij-jolt.sh     # The entire launcher — 289 lines, self-contained
+zellij-jolt.sh     # The entire launcher — self-contained
 install.sh          # Installer with dep checking + GNOME shortcut setup
 README.md           # This file
 .gitignore
@@ -264,7 +265,7 @@ No config files, no plugins, no wasm, no dependencies beyond `zellij` and `fzf`.
 | Key | Action |
 |---|---|
 | `Ctrl+n` | Jump to "New Untracked" |
-| `Ctrl+N` (shift) | Jump to "New Named" |
+| `Ctrl+N` (shift) | Jump to "New Named" (prompt for name) |
 | `Enter` | Attach/create selected session |
 | `Esc` / `Ctrl+c` | Cancel, exit |
 | `Ctrl+j` / `Ctrl+k` | Move down/up |
@@ -297,7 +298,7 @@ zellij list-sessions -n
 
 | Scenario | Behavior |
 |---|---|
-| No Zellij sessions | List shows only 3 special options |
+| No Zellij sessions | List shows 4 action options; Resume shows "No sessions" |
 | Session cache missing | Preview shows "(no cached data)" with basic info |
 | Session deleted between list render and attach | `zellij attach` fails, falls through to `zellij -s` (recreates) |
 | Terminal with no TTY | `exec < /dev/tty` reopens the controlling terminal |
