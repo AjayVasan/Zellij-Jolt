@@ -1532,8 +1532,326 @@ sanitize_name() {
     printf '%s\n' "$out"
 }
 
-# (Task: go, act_delete, act_purge, act_rename, act_pin, pick_project,
-#  pick_layout.)
+# run_or_exec ARGV… — replace this process with ARGV, or with JOLT_DRY_RUN=1
+# print it shell-quoted ("DRY: …") and return 0.
+run_or_exec() {
+    local q
+    if [[ ${JOLT_DRY_RUN:-} == 1 ]]; then
+        printf -v q '%q ' "$@"
+        printf 'DRY: %s\n' "${q% }"
+        return 0
+    fi
+    # execfail: a failed exec returns here instead of killing the script.
+    shopt -s execfail
+    exec "$@"
+    die "cannot run $1"
+}
+
+# session_exists NAME — succeeds when `zellij list-sessions -s` has an
+# exact NAME line (active or exited).
+session_exists() {
+    local out line
+    [[ -n ${1:-} ]] || return 1
+    out=$(zellij list-sessions -s 2>/dev/null) || return 1
+    while IFS= read -r line; do
+        [[ ${line%$'\r'} == "$1" ]] && return 0
+    done <<<"$out"
+    return 1
+}
+
+# _session_status NAME — NAME's status (active|current|exited) from
+# sessions_read in REPLY; returns 1 (REPLY empty) when NAME is not listed.
+_session_status() {
+    local line
+    REPLY=""
+    while IFS= read -r line; do
+        [[ ${line%%$'\t'*} == "$1" ]] || continue
+        line=${line#*$'\t'}
+        REPLY=${line%%$'\t'*}
+        return 0
+    done < <(sessions_read)
+    return 1
+}
+
+# _key_name KEY — session name of a row key "s:NAME" in REPLY; returns 1
+# for action rows (a:…) and anything else.
+_key_name() {
+    REPLY=""
+    [[ ${1:-} == s:?* ]] || return 1
+    REPLY=${1#s:}
+}
+
+# _tty_read PROMPT — print PROMPT on the terminal and read one line from it
+# into REPLY. The terminal is $JOLT_TTY (default /dev/tty; tests point it at
+# a file). Returns 1 when it cannot be opened or read.
+_tty_read() {
+    local tty=${JOLT_TTY:-/dev/tty} ans=""
+    REPLY=""
+    [[ -r $tty ]] || return 1
+    if [[ -w $tty && $tty == /dev/tty ]]; then
+        printf '%s' "$1" 2>/dev/null >"$tty"
+    else
+        printf '%s' "$1" >&2
+    fi
+    { IFS= read -r ans <"$tty"; } 2>/dev/null || [[ -n $ans ]] || return 1
+    REPLY=$ans
+}
+
+# confirm PROMPT — ask y/N on the terminal. Yes without asking when
+# JOLT_ASSUME_YES=1 or CONFIRM_DELETE=off; no terminal means no.
+confirm() {
+    [[ ${JOLT_ASSUME_YES:-} == 1 || ${CFG_CONFIRM_DELETE:-on} == off ]] && return 0
+    _tty_read "$1 [y/N] " || return 1
+    [[ $REPLY =~ ^[[:space:]]*([Yy]|[Yy][Ee][Ss])[[:space:]]*$ ]]
+}
+
+# go NAME [CWD] [LAYOUT] — the single exit door: switch to, attach to or
+# create NAME. Inside zellij it switches sessions (switch-session also
+# creates a missing session; LAYOUT only applies then). Outside it attaches
+# to an existing session or creates a new one in CWD, with LAYOUT if given.
+# The final command goes through run_or_exec (printed under --dry-run).
+go() {
+    local name=${1:-} cwd=${2:-} layout=${3:-} new=""
+    local -a argv
+    [[ -n $name ]] || {
+        warn "no session name given"
+        return 1
+    }
+    session_exists "$name" || new=1
+    if [[ -n ${ZELLIJ:-} ]]; then
+        if [[ $name == "${ZELLIJ_SESSION_NAME:-}" ]]; then
+            printf 'already in %s\n' "$name"
+            return 0
+        fi
+        state_touch "$name" || true
+        # Options first, then `--` so a name starting with "-" stays a name.
+        argv=(zellij action switch-session)
+        [[ -n $cwd ]] && argv+=(--cwd "$cwd")
+        [[ -n $new && -n $layout ]] && argv+=(--layout "$layout")
+        argv+=(-- "$name")
+        run_or_exec "${argv[@]}"
+        return
+    fi
+    state_touch "$name" || true
+    if [[ -z $new ]]; then
+        run_or_exec zellij attach "$name"
+        return
+    fi
+    if [[ -n $cwd ]]; then
+        [[ -d $cwd ]] || {
+            warn "no such directory: $cwd"
+            return 1
+        }
+        if [[ ${JOLT_DRY_RUN:-} == 1 ]]; then
+            printf 'DRY: cd %s\n' "$cwd"
+        else
+            cd -- "$cwd" || {
+                warn "cannot cd to $cwd"
+                return 1
+            }
+        fi
+    fi
+    if [[ -n $layout ]]; then
+        run_or_exec zellij -n "$layout" -s "$name"
+    else
+        run_or_exec zellij attach -c "$name"
+    fi
+}
+
+# act_delete KEY — kill (if running) and delete session "s:NAME" after a
+# confirm. Refuses the current session. A session that is already gone
+# (kill rc 1, delete rc 2, or not listed) counts as success. Forgets NAME's
+# mru/pin entries.
+act_delete() {
+    local name st rc
+    _key_name "${1:-}" || return 0
+    name=$REPLY
+    if [[ $name == "${ZELLIJ_SESSION_NAME:-}" ]]; then
+        warn "refusing to delete the current session ($name)"
+        return 1
+    fi
+    if ! _session_status "$name"; then
+        state_forget "$name" || true
+        return 0
+    fi
+    st=$REPLY
+    case $st in
+        current)
+            warn "refusing to delete the current session ($name)"
+            return 1
+            ;;
+        active)
+            confirm "Kill and delete $name?" || return 0
+            zellij kill-session -- "$name" >/dev/null 2>&1
+            rc=$?
+            if ((rc != 0 && rc != 1)); then
+                warn "kill-session $name failed (rc $rc)"
+                return 1
+            fi
+            ;;
+        *)
+            confirm "Delete $name?" || return 0
+            ;;
+    esac
+    zellij delete-session -f -- "$name" >/dev/null 2>&1
+    rc=$?
+    if ((rc != 0 && rc != 2)); then
+        warn "delete-session $name failed (rc $rc)"
+        return 1
+    fi
+    state_forget "$name" || true
+    return 0
+}
+
+# act_purge — after one confirm, delete every exited session.
+act_purge() {
+    local line rc fail=0
+    local -a exited=()
+    while IFS= read -r line; do
+        [[ $line == *$'\texited\t'* ]] && exited+=("${line%%$'\t'*}")
+    done < <(sessions_read)
+    if ((${#exited[@]} == 0)); then
+        printf 'no exited sessions\n'
+        return 0
+    fi
+    confirm "Delete ${#exited[@]} exited sessions?" || return 0
+    for line in "${exited[@]}"; do
+        zellij delete-session -f -- "$line" >/dev/null 2>&1
+        rc=$?
+        if ((rc != 0 && rc != 2)); then
+            warn "delete-session $line failed (rc $rc)"
+            fail=1
+            continue
+        fi
+        state_forget "$line" || true
+    done
+    return "$fail"
+}
+
+# act_rename KEY — rename running session "s:NAME". The new name comes from
+# $JOLT_RENAME_TO or a terminal prompt (empty answer cancels; unusable names
+# re-prompt, up to 3 tries) and is sanitized. Exited sessions can't be renamed by zellij.
+act_rename() {
+    local old new raw rc tries=0
+    _key_name "${1:-}" || return 0
+    old=$REPLY
+    if ! _session_status "$old"; then
+        warn "no session named $old"
+        return 1
+    fi
+    if [[ $REPLY == exited ]]; then
+        warn "zellij can only rename running sessions ($old is exited)"
+        return 1
+    fi
+    while :; do
+        if ((++tries > 3)); then
+            warn "too many unusable names; rename cancelled"
+            return 1
+        fi
+        if [[ -n ${JOLT_RENAME_TO+x} ]]; then
+            raw=$JOLT_RENAME_TO
+        else
+            _tty_read "Rename $old to: " || return 0
+            raw=$REPLY
+        fi
+        _trim_line "$raw"
+        [[ -n $REPLY ]] || return 0
+        if new=$(sanitize_name "$raw"); then
+            break
+        fi
+        warn "unusable session name: $raw"
+        [[ -n ${JOLT_RENAME_TO+x} ]] && return 1
+    done
+    [[ $new == "$old" ]] && return 0
+    if session_exists "$new"; then
+        warn "a session named $new already exists"
+        return 1
+    fi
+    zellij --session="$old" action rename-session -- "$new" >/dev/null 2>&1
+    rc=$?
+    if ((rc != 0)); then
+        warn "rename-session failed (rc $rc)"
+        return 1
+    fi
+    state_rename "$old" "$new" || true
+    return 0
+}
+
+# act_pin KEY — toggle the pin on session "s:NAME".
+act_pin() {
+    _key_name "${1:-}" || return 0
+    pins_toggle "$REPLY"
+}
+
+# action_dispatch ACT [KEY] — the --action handler. rc 2 for unknown ACT.
+action_dispatch() {
+    case "${1:-}" in
+        delete) act_delete "${2:-}" ;;
+        purge) act_purge ;;
+        rename) act_rename "${2:-}" ;;
+        pin) act_pin "${2:-}" ;;
+        *) return 2 ;;
+    esac
+}
+
+# _doctor_tool NAME MIN — print "NAME VERSION (ok|too old, need >= MIN)" or
+# "NAME missing (need >= MIN)"; returns 1 unless the floor is met.
+_doctor_tool() {
+    local out v
+    if ! command -v "$1" >/dev/null 2>&1; then
+        printf '%s missing (need >= %s)\n' "$1" "$2"
+        return 1
+    fi
+    out=$("$1" --version 2>/dev/null) || out=""
+    out=${out%%$'\n'*}
+    v=${out#"$1 "}
+    v=${v%% *}
+    if [[ -n $v ]] && (($(ver_to_int "$v") >= $(ver_to_int "$2"))); then
+        printf '%s %s (ok)\n' "$1" "$v"
+        return 0
+    fi
+    printf '%s %s (too old, need >= %s)\n' "$1" "${v:-unknown}" "$2"
+    return 1
+}
+
+# doctor — environment diagnostics. rc 0 when bash, fzf and zellij meet
+# the floors, else 1. Missing optional tools never fail it.
+doctor() {
+    local rc=0 have t
+    have="${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}.${BASH_VERSINFO[2]}"
+    if (($(ver_to_int "$have") >= $(ver_to_int "$JOLT_MIN_BASH"))); then
+        printf 'bash %s (ok)\n' "$have"
+    else
+        printf 'bash %s (too old, need >= %s)\n' "$have" "$JOLT_MIN_BASH"
+        rc=1
+    fi
+    _doctor_tool fzf "$JOLT_MIN_FZF" || rc=1
+    _doctor_tool zellij "$JOLT_MIN_ZELLIJ" || rc=1
+    if [[ -d $JOLT_CACHE_DIR ]]; then
+        printf 'cache dir %s\n' "$JOLT_CACHE_DIR"
+    else
+        printf 'cache dir %s (missing)\n' "$JOLT_CACHE_DIR"
+    fi
+    config_load 2>/dev/null
+    theme_load
+    printf 'theme %s\n' "${JOLT_THEME_DESC:-unknown}"
+    for t in zoxide fd; do
+        if command -v "$t" >/dev/null 2>&1 || { [[ $t == fd ]] && command -v fdfind >/dev/null 2>&1; }; then
+            printf '%s found\n' "$t"
+        else
+            printf '%s missing\n' "$t"
+        fi
+    done
+    if [[ -f $JOLT_CONFIG_FILE ]]; then
+        printf 'config %s\n' "$JOLT_CONFIG_FILE"
+    else
+        printf 'config %s (not found, using defaults)\n' "$JOLT_CONFIG_FILE"
+    fi
+    printf 'state %s\n' "$JOLT_STATE_DIR"
+    return "$rc"
+}
+
+# (Task: pick_project, pick_layout.)
 
 # ── picker ──────────────────────────────────────────────────────────────
 
@@ -1619,8 +1937,15 @@ main() {
             preview_render "$2"
             ;;
         --action)
-            (($# >= 3)) || _usage_error "--action needs ACT and KEY"
-            die "not implemented"
+            (($# >= 2)) || _usage_error "--action needs ACT and KEY"
+            case $2 in
+                delete | rename | pin | purge) ;;
+                *) _usage_error "unknown action: $2 (delete|rename|pin|purge)" ;;
+            esac
+            [[ $2 == purge || $# -ge 3 ]] || _usage_error "--action $2 needs a KEY"
+            config_load
+            action_dispatch "$2" "${3:-}"
+            exit $?
             ;;
         --dry-run)
             JOLT_DRY_RUN=1
@@ -1632,7 +1957,8 @@ main() {
             init_shell "$2" || _usage_error "unsupported shell: $2 (bash|zsh|fish)"
             ;;
         --doctor)
-            die "not implemented"
+            doctor
+            exit $?
             ;;
         *)
             _usage_error "unknown option: $1"

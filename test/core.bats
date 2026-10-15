@@ -26,12 +26,6 @@ setup() {
   assert_failure 2
 }
 
-@test "not-yet-built flag dies without exec'ing a shell" {
-  JOLT_NO_FALLBACK=1 run "$REPO/zellij-jolt.sh" --doctor
-  assert_failure 1
-  assert_output --partial "not implemented"
-}
-
 @test "bash floor guard runs before anything else" {
   JOLT_FAKE_BASH_MAJOR=3 run "$REPO/zellij-jolt.sh" --version
   assert_failure 1

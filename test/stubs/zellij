@@ -22,10 +22,17 @@ _stub_ls_present() {
 
 # Echo the first positional (non-flag) argument, e.g. the session name in
 # `kill-session -f NAME` or `delete-session NAME -y`. Flags (anything
-# starting with -) are skipped; the first match wins.
+# starting with -) are skipped; the first match wins. A literal `--` ends
+# option parsing: the argument after it is returned even if it starts with -.
 _first_positional() {
+  local after=""
   for a in "$@"; do
+    if [ -n "$after" ]; then
+      printf '%s\n' "$a"
+      return 0
+    fi
     case "$a" in
+    --) after=1 ;;
     -*) ;;
     *)
       printf '%s\n' "$a"
@@ -60,18 +67,21 @@ list-sessions | ls)
   echo "zellij 0.45.1"
   exit 0
   ;;
+# STUB_RC_KILL / STUB_RC_DELETE: when set, kill-session / delete-session of
+# a session listed in $STUB_LS exits with that rc instead of 0 (simulates a
+# session that vanished between listing and acting on it).
 kill-session)
   target="$(_first_positional "$@")"
-  if _stub_ls_present && grep -qF "$target" "$STUB_LS"; then
-    exit 0
+  if _stub_ls_present && grep -qF -- "$target" "$STUB_LS"; then
+    exit "${STUB_RC_KILL:-0}"
   fi
   echo "No session named \"$target\" found." >&2
   exit 1
   ;;
 delete-session)
   target="$(_first_positional "$@")"
-  if _stub_ls_present && grep -qF "$target" "$STUB_LS"; then
-    exit 0
+  if _stub_ls_present && grep -qF -- "$target" "$STUB_LS"; then
+    exit "${STUB_RC_DELETE:-0}"
   fi
   echo "No session named \"$target\" found." >&2
   exit 2
