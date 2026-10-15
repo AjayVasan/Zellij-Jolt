@@ -47,7 +47,7 @@ Usage: install.sh [--yes] [--no-shortcut] [--uninstall] [--help]
   --uninstall     Remove the installed script and symlink, then exit.
   --help          Show this help.
 
-A PATH that isn't a terminal (e.g. piped input) behaves like --yes.
+Stdin that isn't a terminal (e.g. piped input) behaves like --yes.
 EOF
 }
 
@@ -182,6 +182,27 @@ gsettings_register_shortcut() {
     echo -e "${GREEN}✓${NC} Registered $binding -> $name"
 }
 
+# gnome_shortcut_command TARGET — the command line a GNOME shortcut should
+# run: TARGET wrapped in the first terminal emulator found (a shortcut has
+# no tty of its own, so a bare TARGET would start and exit at once).
+# Order: alacritty, kitty, wezterm, ghostty, foot, gnome-terminal. Returns
+# 1 (no output) when none is on PATH.
+gnome_shortcut_command() {
+    local q term
+    printf -v q '%q' "$1"
+    for term in alacritty kitty wezterm ghostty foot gnome-terminal; do
+        command -v "$term" >/dev/null 2>&1 || continue
+        case "$term" in
+            alacritty | ghostty) printf '%s -e %s\n' "$term" "$q" ;;
+            kitty | foot) printf '%s %s\n' "$term" "$q" ;;
+            wezterm) printf 'wezterm start -- %s\n' "$q" ;;
+            gnome-terminal) printf 'gnome-terminal -- %s\n' "$q" ;;
+        esac
+        return 0
+    done
+    return 1
+}
+
 # ── Steps ──────────────────────────────────────────────────────────────
 
 print_header() {
@@ -239,12 +260,22 @@ check_version_floors() {
     _check_floor fzf "$FLOOR_FZF"
 }
 
+# install_fail MSG — print an install error and exit 1.
+install_fail() {
+    echo -e "${RED}Error:${NC} $1" >&2
+    exit 1
+}
+
 do_install() {
     echo -e "${CYAN}Installing ${SCRIPT_NAME}...${NC}"
-    mkdir -p "$INSTALL_DIR" "$BIN_DIR"
-    cp "$SOURCE" "${INSTALL_DIR}/${SCRIPT_NAME}.sh"
-    chmod +x "${INSTALL_DIR}/${SCRIPT_NAME}.sh"
-    ln -sf "${INSTALL_DIR}/${SCRIPT_NAME}.sh" "${BIN_DIR}/${SCRIPT_NAME}"
+    mkdir -p "$INSTALL_DIR" "$BIN_DIR" ||
+        install_fail "could not create $INSTALL_DIR or $BIN_DIR"
+    cp "$SOURCE" "${INSTALL_DIR}/${SCRIPT_NAME}.sh" ||
+        install_fail "could not copy $SOURCE to $INSTALL_DIR"
+    chmod +x "${INSTALL_DIR}/${SCRIPT_NAME}.sh" ||
+        install_fail "could not make ${INSTALL_DIR}/${SCRIPT_NAME}.sh executable"
+    ln -sf "${INSTALL_DIR}/${SCRIPT_NAME}.sh" "${BIN_DIR}/${SCRIPT_NAME}" ||
+        install_fail "could not create the symlink ${BIN_DIR}/${SCRIPT_NAME}"
     echo -e "${GREEN}✓${NC} Installed to ${INSTALL_DIR}/${SCRIPT_NAME}.sh"
     echo -e "${GREEN}✓${NC} Symlinked at ${BIN_DIR}/${SCRIPT_NAME}"
     echo ""
@@ -315,11 +346,15 @@ maybe_register_gnome_shortcut() {
     fi
 
     echo -e "${CYAN}GNOME detected.${NC}"
-    local ans
+    local ans cmd
+    if ! cmd="$(gnome_shortcut_command "${BIN_DIR}/${SCRIPT_NAME}")"; then
+        echo -e "${YELLOW}No supported terminal emulator found — skipping the GNOME shortcut (it needs one to run in).${NC}"
+        echo ""
+        return 0
+    fi
     read -rp "Register a GNOME keyboard shortcut to launch zellij-jolt? [y/N] " ans || ans="n"
     if [[ "$ans" =~ ^[Yy]$ ]]; then
-        gsettings_register_shortcut "zellij-jolt" "<Control><Shift>Return" \
-            "${BIN_DIR}/${SCRIPT_NAME}"
+        gsettings_register_shortcut "zellij-jolt" "<Control><Shift>Return" "$cmd"
     fi
     echo ""
 }
@@ -351,7 +386,7 @@ parse_args() {
         shift
     done
 
-    # A PATH that isn't a terminal (piped input, CI, etc.) behaves like
+    # Stdin that isn't a terminal (piped input, CI, etc.) behaves like
     # --yes: no prompt can be answered, so none should be attempted.
     if [[ ! -t 0 ]]; then
         YES=1

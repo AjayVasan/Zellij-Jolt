@@ -64,6 +64,28 @@ run_install() {
   [ -L "$HOME/.local/bin/zellij-jolt" ]
 }
 
+@test "install into an unwritable target exits 1 with an error and no checkmark" {
+  mkdir -p "$BATS_TEST_TMPDIR/ro"
+  chmod 555 "$BATS_TEST_TMPDIR/ro"
+  run env -u XDG_CURRENT_DESKTOP XDG_DATA_HOME="$BATS_TEST_TMPDIR/ro/share" \
+    XDG_BIN_HOME="$BATS_TEST_TMPDIR/ro/bin" bash "$REPO/install.sh" --yes
+  chmod 755 "$BATS_TEST_TMPDIR/ro"
+  assert_failure 1
+  assert_output --partial "Error:"
+  refute_output --partial "✓"
+}
+
+@test "install exits 1 when only the bin dir is unwritable (symlink step fails)" {
+  mkdir -p "$BATS_TEST_TMPDIR/robin"
+  chmod 555 "$BATS_TEST_TMPDIR/robin"
+  run env -u XDG_CURRENT_DESKTOP XDG_DATA_HOME="$BATS_TEST_TMPDIR/share" \
+    XDG_BIN_HOME="$BATS_TEST_TMPDIR/robin" bash "$REPO/install.sh" --yes
+  chmod 755 "$BATS_TEST_TMPDIR/robin"
+  assert_failure 1
+  assert_output --partial "could not create the symlink"
+  refute_output --partial "✓"
+}
+
 @test "uninstall removes the symlink and install dir" {
   run_install --yes
   assert_success
@@ -274,4 +296,50 @@ jolt_install_source() {
   assert_output 1
   run grep -c "custom-keybindings${sep}\[.*custom0/.*custom1/" "$GSET_LOG"
   assert_output 1
+}
+
+# ── GNOME shortcut: terminal wrapping (a shortcut has no tty) ─────────
+
+@test "GNOME shortcut command is wrapped in the first terminal found (alacritty)" {
+  jolt_install_source
+  export GSET_EXISTING="@as []"
+  YES=0 NO_SHORTCUT=0 XDG_CURRENT_DESKTOP=GNOME BIN_DIR=/opt/bin
+  run maybe_register_gnome_shortcut <<<"y"
+  assert_success
+  local sep
+  sep="$(printf '\x1f')"
+  run grep -c "custom-keybinding:.*custom0/${sep}command${sep}alacritty -e /opt/bin/zellij-jolt${sep}" "$GSET_LOG"
+  assert_output 1
+}
+
+@test "gnome_shortcut_command uses each terminal's own exec syntax" {
+  jolt_install_source
+  local t d expect
+  for t in kitty wezterm ghostty foot gnome-terminal; do
+    d="$BATS_TEST_TMPDIR/only-$t"
+    mkdir -p "$d"
+    printf '#!/bin/sh\nexit 0\n' >"$d/$t"
+    chmod +x "$d/$t"
+    case $t in
+      kitty) expect="kitty /b/zellij-jolt" ;;
+      wezterm) expect="wezterm start -- /b/zellij-jolt" ;;
+      ghostty) expect="ghostty -e /b/zellij-jolt" ;;
+      foot) expect="foot /b/zellij-jolt" ;;
+      gnome-terminal) expect="gnome-terminal -- /b/zellij-jolt" ;;
+    esac
+    PATH="$d" run gnome_shortcut_command /b/zellij-jolt
+    assert_success
+    assert_output "$expect"
+  done
+}
+
+@test "GNOME shortcut is skipped with a message when no terminal is on PATH" {
+  jolt_install_source
+  mkdir -p "$BATS_TEST_TMPDIR/empty"
+  YES=0 NO_SHORTCUT=0 XDG_CURRENT_DESKTOP=GNOME
+  PATH="$BATS_TEST_TMPDIR/empty" run maybe_register_gnome_shortcut <<<"y"
+  assert_success
+  assert_output --partial "No supported terminal emulator found"
+  run grep -c . "$GSET_LOG"
+  assert_output 0
 }
