@@ -307,7 +307,364 @@ config_load() {
 
 # ── theme ───────────────────────────────────────────────────────────────
 
-# (Task: theme_load — zellij theme resolution and fzf color mapping.)
+# theme_load runs on every fzf list/preview callback, so it is pure bash
+# (no subshells or external tools) and never fails: anything it cannot
+# parse is skipped and the worst case is the terminal's default colors.
+# KDL handling is deliberately small: // and /* */ comments, /- slashdash,
+# quoted strings, { } ; node separators and brace depth.
+
+# _th_clean LINE — LINE with comments stripped and { } ; padded by spaces
+# (outside strings), in REPLY. Carries /* */ state across lines in
+# _th_inblock (dynamically scoped from theme_load).
+_th_clean() {
+    local s=$1 out="" c i n q=0
+    if ((_th_inblock)); then
+        if [[ $s != *'*/'* ]]; then
+            REPLY=""
+            return 0
+        fi
+        s=${s#*'*/'}
+        _th_inblock=0
+    fi
+    # fast paths: whole-line // comment; no strings and no /* — cut at //
+    # and pad separators
+    c=${s#"${s%%[![:space:]]*}"}
+    if [[ $c == //* || -z $c ]]; then
+        REPLY=""
+        return 0
+    fi
+    c=""
+    if [[ $s != *\"* && $s != *'/*'* ]]; then
+        s=${s%%//*}
+        s=${s//\{/ \{ }
+        s=${s//\}/ \} }
+        REPLY=${s//;/ ; }
+        return 0
+    fi
+    # strings but no /*: walk "-delimited segments (escapes parked in
+    # \x02 \x03), padding only the unquoted ones — no per-char loop
+    if [[ $s != *'/*'* ]]; then
+        s=${s//'\\'/$'\x02'}
+        s=${s//'\"'/$'\x03'}
+        while :; do
+            c=${s%%\"*}
+            if ((!q)); then
+                [[ $c == *//* ]] && i=1 && c=${c%%//*}
+                c=${c//\{/ \{ }
+                c=${c//\}/ \} }
+                c=${c//;/ ; }
+            fi
+            out+=$c
+            [[ ${i:-} == 1 || $s != *\"* ]] && break
+            out+='"'
+            s=${s#*\"}
+            q=$((1 - q))
+        done
+        out=${out//$'\x02'/'\\'}
+        REPLY=${out//$'\x03'/'\"'}
+        return 0
+    fi
+    n=${#s}
+    for ((i = 0; i < n; i++)); do
+        c=${s:i:1}
+        if ((q)); then
+            out+=$c
+            if [[ $c == '\' ]]; then
+                out+=${s:i+1:1}
+                i=$((i + 1))
+            elif [[ $c == '"' ]]; then
+                q=0
+            fi
+            continue
+        fi
+        case $c in
+            '"') q=1; out+=$c ;;
+            '/')
+                case ${s:i+1:1} in
+                    '/') break ;;
+                    '*')
+                        s=${s:i+2}
+                        if [[ $s != *'*/'* ]]; then
+                            _th_inblock=1
+                            break
+                        fi
+                        s=${s#*'*/'}
+                        n=${#s}
+                        i=-1
+                        out+=' '
+                        ;;
+                    *) out+=$c ;;
+                esac
+                ;;
+            '{' | '}' | ';') out+=" $c " ;;
+            *) out+=$c ;;
+        esac
+    done
+    REPLY=$out
+}
+
+# _th_color TOKEN... — "R G B" | "#rrggbb" | "#rgb" → decimal "R G B" in
+# REPLY. 256-color indices and anything else fail (caller skips them).
+_th_color() {
+    local a=${1:-} r g b
+    if (($# >= 3)) && [[ $1 =~ ^[0-9]{1,3}$ && $2 =~ ^[0-9]{1,3}$ && $3 =~ ^[0-9]{1,3}$ ]]; then
+        r=$((10#$1)) g=$((10#$2)) b=$((10#$3))
+        ((r <= 255 && g <= 255 && b <= 255)) || return 1
+        REPLY="$r $g $b"
+        return 0
+    fi
+    (($# == 1)) || return 1
+    a=${a#\"}
+    a=${a%\"}
+    if [[ $a =~ ^#[0-9a-fA-F]{6}$ ]]; then
+        REPLY="$((16#${a:1:2})) $((16#${a:3:2})) $((16#${a:5:2}))"
+    elif [[ $a =~ ^#[0-9a-fA-F]{3}$ ]]; then
+        REPLY="$((16#${a:1:1}${a:1:1})) $((16#${a:2:1}${a:2:1})) $((16#${a:3:1}${a:3:1}))"
+    else
+        return 1
+    fi
+}
+
+# _th_stmt — interpret one finished KDL node (_th_toks) at the current
+# block path (_th_stack). Top level: theme / theme_dir. Inside
+# themes { NAME { … } }: legacy palette keys (depth 2) or component
+# blocks (depth 3), stored as _th_pal["NAME<US>ROLE"]="R G B".
+_th_stmt() {
+    local d=${#_th_stack[@]} key=${_th_toks[0]:-} name role=""
+    ((${#_th_toks[@]})) || return 0
+    [[ $key == /-* ]] && return 0
+    if ((d == 0)); then
+        if [[ ($key == theme || $key == theme_dir) && ${#_th_toks[@]} -ge 2 ]]; then
+            _kdl_str "${_th_toks[*]:1}"
+            if [[ $key == theme ]]; then
+                _th_cfg_name=$REPLY
+            else
+                _th_cfg_dir=$REPLY
+            fi
+        fi
+        return 0
+    fi
+    ((d == 2 || d == 3)) && [[ ${_th_stack[0]} == themes ]] || return 0
+    name=${_th_stack[1]}
+    if ((d == 2)); then
+        case $key in
+            fg | bg | red | green | yellow | blue | magenta | orange | cyan | black | white) role=$key ;;
+            *) return 0 ;;
+        esac
+        _th_color "${_th_toks[@]:1}" || return 0
+        _th_fmt[$name]=${_th_fmt[$name]:-legacy}
+    else
+        case ${_th_stack[2]}:$key in
+            text_unselected:base) role=fg ;;
+            text_unselected:background) role=bg ;;
+            frame_selected:base) role=accent ;;
+            ribbon_selected:background) role=accent2 ;;
+            exit_code_error:base) role=red ;;
+            exit_code_success:base) role=green ;;
+            text_selected:emphasis_0) role=yellow ;;
+            *) return 0 ;;
+        esac
+        _th_color "${_th_toks[@]:1}" || return 0
+        _th_fmt[$name]=component
+    fi
+    _th_pal["$name"$'\x1f'"$role"]=$REPLY
+}
+
+# _th_scan FILE — feed FILE through the tokenizer, recording every theme
+# it defines plus top-level theme / theme_dir. Expects `set -f` (tokens
+# are word-split unquoted). Unreadable files are ignored.
+_th_scan() {
+    local file=$1 line tok skip=0
+    local -a lines words _th_toks=() _th_stack=()
+    [[ -f $file && -r $file ]] || return 0
+    mapfile -t lines <"$file" 2>/dev/null || return 0
+    _th_inblock=0
+    for line in ${lines[@]+"${lines[@]}"}; do
+        _th_clean "${line%$'\r'}"
+        [[ $REPLY == *[![:space:]]* ]] || continue
+        # shellcheck disable=SC2206  # word split; globbing is off (set -f)
+        words=($REPLY)
+        for tok in "${words[@]}"; do
+            # skip>0: nesting depth inside an ignored block — a /- slashdash
+            # block or any top-level block other than themes (keybinds…)
+            if ((skip)); then
+                case $tok in
+                    '{') skip=$((skip + 1)) ;;
+                    '}') skip=$((skip - 1)) ;;
+                esac
+                continue
+            fi
+            case $tok in
+                '{')
+                    _kdl_str "${_th_toks[*]-}"
+                    if [[ ${_th_toks[0]:-} == /-* ]] ||
+                        { ((${#_th_stack[@]} == 0)) && [[ $REPLY != themes ]]; }; then
+                        skip=1
+                    else
+                        _th_stack+=("$REPLY")
+                    fi
+                    _th_toks=()
+                    ;;
+                '}')
+                    _th_stmt
+                    _th_toks=()
+                    ((${#_th_stack[@]})) && unset "_th_stack[${#_th_stack[@]}-1]"
+                    ;;
+                ';')
+                    _th_stmt
+                    _th_toks=()
+                    ;;
+                *) _th_toks+=("$tok") ;;
+            esac
+        done
+        ((skip)) || _th_stmt
+        _th_toks=()
+    done
+    return 0
+}
+
+# _th_hex "R G B" — "#rrggbb" in REPLY.
+_th_hex() {
+    # shellcheck disable=SC2086  # deliberate split of "R G B"
+    printf -v REPLY '#%02x%02x%02x' $1
+}
+
+# _th_mix "R G B" PCT — lighten toward white by PCT% (negative: darken
+# toward black by -PCT%), "R G B" in REPLY.
+_th_mix() {
+    local p=$2 i
+    # shellcheck disable=SC2206  # "R G B" digits only
+    local -a c=($1)
+    for i in 0 1 2; do
+        if ((p >= 0)); then
+            c[i]=$((c[i] + (255 - c[i]) * p / 100))
+        else
+            c[i]=$((c[i] * (100 + p) / 100))
+        fi
+    done
+    REPLY="${c[0]} ${c[1]} ${c[2]}"
+}
+
+# _th_set_default [WHY] — terminal ANSI colors; fzf keeps its base 16
+# scheme with ANSI-indexed accents (no hardcoded palette).
+_th_set_default() {
+    C_RESET=$'\e[0m' C_DIM=$'\e[2m' C_BOLD=$'\e[1m' C_ITA=$'\e[3m'
+    C_ACCENT=$'\e[32m' C_OK=$'\e[32m' C_WARN=$'\e[33m'
+    C_MUTED=$'\e[90m' C_TITLE=$'\e[1m'
+    FZF_COLOR_OPT="16,hl:2,hl+:2,pointer:2,marker:2,spinner:3,info:6,prompt:6,border:2,header:8"
+    JOLT_THEME_DESC="terminal default${1:+ ($1)}"
+}
+
+# theme_load — set C_RESET C_DIM C_BOLD C_ACCENT C_OK C_WARN C_MUTED
+# C_TITLE C_ITA (ANSI strings, empty when colorless), FZF_COLOR_OPT (value
+# for fzf --color; "bw" when colorless) and JOLT_THEME_DESC (for --doctor).
+# NO_COLOR or THEME=none → colorless. Theme name: CFG_THEME unless "auto",
+# else `theme "x"` in $JOLT_ZELLIJ_CONFIG; looked up in that file's
+# themes {} block, then in theme_dir (default: themes/ next to the config)
+# NAME.kdl first, then every *.kdl. Unknown/unparsable → terminal default.
+theme_load() {
+    local mode=${CFG_THEME:-auto} name dir f src="" fmt us=$'\x1f' noglob=0
+    local fg bg accent green yellow cyan fgd bgp muted
+    local -A _th_pal=() _th_fmt=()
+    local _th_cfg_name="" _th_cfg_dir="" _th_inblock=0
+
+    C_RESET="" C_DIM="" C_BOLD="" C_ITA=""
+    C_ACCENT="" C_OK="" C_WARN="" C_MUTED="" C_TITLE=""
+    if [[ -n ${NO_COLOR:-} || $mode == none ]]; then
+        FZF_COLOR_OPT=bw
+        JOLT_THEME_DESC=none
+        return 0
+    fi
+
+    [[ $- == *f* ]] && noglob=1
+    set -f
+    _th_scan "${JOLT_ZELLIJ_CONFIG:-}"
+    name=$_th_cfg_name
+    [[ $mode != auto ]] && name=$mode
+    if [[ -n $name && -z ${_th_fmt[$name]:-} ]]; then
+        dir=${_th_cfg_dir:-${JOLT_ZELLIJ_CONFIG%/*}/themes}
+        if [[ $dir == "~" ]]; then
+            dir=$HOME
+        elif [[ $dir == "~/"* ]]; then
+            dir="$HOME/${dir#\~/}"
+        fi
+        set +f
+        for f in "$dir/$name.kdl" "$dir"/*.kdl; do
+            [[ -f $f ]] || continue
+            set -f
+            _th_scan "$f"
+            set +f
+            if [[ -n ${_th_fmt[$name]:-} ]]; then
+                src=${f##*/}
+                break
+            fi
+        done
+    fi
+    ((noglob)) && set -f || set +f
+
+    if [[ -z $name ]]; then
+        _th_set_default
+        return 0
+    fi
+    fmt=${_th_fmt[$name]:-}
+    if [[ -z $fmt ]]; then
+        _th_set_default "theme $name not found"
+        return 0
+    fi
+    fg=${_th_pal[$name${us}fg]:-}
+    bg=${_th_pal[$name${us}bg]:-}
+    green=${_th_pal[$name${us}green]:-}
+    accent=${_th_pal[$name${us}accent]:-${_th_pal[$name${us}accent2]:-$green}}
+    if [[ -z $fg || -z $bg || -z $accent ]]; then
+        _th_set_default "theme $name unparsable"
+        return 0
+    fi
+    green=${green:-$accent}
+    yellow=${_th_pal[$name${us}yellow]:-$accent}
+    cyan=${_th_pal[$name${us}cyan]:-${_th_pal[$name${us}blue]:-$accent}}
+    _th_mix "$bg" 40
+    muted=$REPLY
+    _th_mix "$bg" 15
+    bgp=$REPLY
+    _th_mix "$fg" -10
+    fgd=$REPLY
+
+    C_RESET=$'\e[0m' C_DIM=$'\e[2m' C_BOLD=$'\e[1m' C_ITA=$'\e[3m'
+    C_ACCENT=$'\e[38;2;'"${accent// /;}m"
+    C_OK=$'\e[38;2;'"${green// /;}m"
+    C_WARN=$'\e[38;2;'"${yellow// /;}m"
+    C_MUTED=$'\e[38;2;'"${muted// /;}m"
+    C_TITLE=$'\e[1;38;2;'"${fg// /;}m"
+
+    _th_hex "$bg"
+    bg=$REPLY
+    _th_hex "$bgp"
+    bgp=$REPLY
+    _th_hex "$fg"
+    fg=$REPLY
+    _th_hex "$fgd"
+    fgd=$REPLY
+    _th_hex "$accent"
+    accent=$REPLY
+    _th_hex "$yellow"
+    yellow=$REPLY
+    _th_hex "$cyan"
+    cyan=$REPLY
+    _th_hex "$muted"
+    muted=$REPLY
+    FZF_COLOR_OPT="bg:$bg,bg+:$bgp,fg:$fgd,fg+:$fg,hl:$accent,hl+:$accent"
+    FZF_COLOR_OPT+=",gutter:$bg,info:$cyan,pointer:$accent,marker:$accent"
+    FZF_COLOR_OPT+=",spinner:$yellow,header:$muted,prompt:$cyan,border:$accent"
+    FZF_COLOR_OPT+=",preview-bg:$bg,preview-fg:$fgd"
+
+    if [[ $fmt == component ]]; then
+        fmt="component format"
+    else
+        fmt="legacy palette"
+    fi
+    JOLT_THEME_DESC="$name ($fmt${src:+, $src})"
+    return 0
+}
 
 # ── data ────────────────────────────────────────────────────────────────
 
