@@ -32,6 +32,17 @@ setup() {
   assert_output --partial "not implemented"
 }
 
+@test "bash floor guard runs before anything else" {
+  JOLT_FAKE_BASH_MAJOR=3 run "$REPO/zellij-jolt.sh" --version
+  assert_failure 1
+  assert_output "zellij-jolt requires bash ≥4.2 (macOS: brew install bash)"
+  JOLT_FAKE_BASH_MAJOR=3 run bash -c 'JOLT_NO_MAIN=1 source "$REPO/zellij-jolt.sh"; echo "rc=$?"; declare -F ver_to_int || echo "no functions"'
+  assert_line "rc=1"
+  assert_line "no functions"
+  JOLT_FAKE_BASH_MAJOR=5 run "$REPO/zellij-jolt.sh" --version
+  assert_success
+}
+
 @test "JOLT_SELF is an absolute path to the script" {
   [ "$JOLT_SELF" = "$REPO/zellij-jolt.sh" ]
 }

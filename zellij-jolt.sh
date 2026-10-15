@@ -11,6 +11,25 @@
 # the functions only (used by the bats test suite).
 set -uo pipefail
 
+# Bash floor guard. Must stay bash-3.2 safe: only POSIX tests, printf and
+# exit/exec may run before it passes. JOLT_FAKE_BASH_MAJOR is a test hook
+# (a faked major is paired with minor 0).
+_jolt_bmaj=${JOLT_FAKE_BASH_MAJOR:-${BASH_VERSINFO[0]:-0}}
+_jolt_bmin=${BASH_VERSINFO[1]:-0}
+[ -n "${JOLT_FAKE_BASH_MAJOR:-}" ] && _jolt_bmin=0
+if [ "$_jolt_bmaj" -lt 4 ] || { [ "$_jolt_bmaj" -eq 4 ] && [ "$_jolt_bmin" -lt 2 ]; }; then
+    printf '%s\n' "zellij-jolt requires bash ≥4.2 (macOS: brew install bash)" >&2
+    if [ -z "${JOLT_NO_FALLBACK:-}" ] && [ -t 0 ]; then
+        case "${SHELL:-/bin/sh}" in
+            *zellij-jolt*) exec /bin/sh -l ;;
+            *) exec "${SHELL:-/bin/sh}" -l ;;
+        esac
+    fi
+    # return when sourced, exit when executed
+    return 1 2>/dev/null || exit 1
+fi
+unset _jolt_bmaj _jolt_bmin
+
 # ── core ────────────────────────────────────────────────────────────────
 
 JOLT_VERSION="2.0.0"
