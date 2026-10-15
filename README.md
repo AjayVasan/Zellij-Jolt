@@ -1,312 +1,230 @@
 # Zellij-Jolt
 
-**Jolt into your Zellij sessions — fuzzy picker, live preview, instant attach.**
+**A fast, keyboard-first fuzzy picker for Zellij sessions.**
 
-A single `bash` script that replaces your terminal's raw shell with a fuzzy Zellij session picker. Opens an `fzf` TUI with four actions and a live preview pane on the right — tab names, what's running in each, age, status. Actions: create a named session, create an auto-named session, resume an existing session via a fuzzy sub-picker, or exit. Works as a drop-in Alacritty `shell` or via `-e` flag.
-
-Reads Zellij's own on-disk cache — zero config. Renders in your exact Zellij theme colors (gruber-darker by default).
-
----
-
-## How it works — the full picture
-
-### Entry points
-
-Alacritty launches `zellij-jolt` in one of two ways:
-
-**A) `[terminal] shell = "zellij-jolt"`** — every new Alacritty window runs the picker instead of a login shell. When you exit Zellij (or escape the picker), Alacritty closes because its child process terminated.
-
-**B) `alacritty -e zellij-jolt`** — used by GNOME keyboard shortcuts. Same effect; the `-e` flag tells Alacritty to run a command instead of the configured shell.
-
-Either way, the script gets a TTY on stdin. Line 236 does `exec < /dev/tty` to guarantee fzf can interact with the terminal (covers edge cases where stdin might be inherited as a pipe).
-
-### Dependency check (lines 222–224)
-
-Before doing anything, verifies `zellij` and `fzf` are on `PATH`. Exits with an error message if either is missing — no silent failure into a blank screen.
-
-### Session list (lines 226–234)
-
-The main picker shows exactly four action entries — no session names are listed on the main page. Sessions appear only in the Resume sub-picker.
+Zellij-Jolt replaces your terminal's shell with an `fzf`-powered picker: fuzzy-find and attach to any session, jump straight into a project directory, spin up a session from a layout, rename/pin/delete, and resurrect exited sessions — all from one screen, with a live preview of what's actually running in each session. It reads Zellij's own on-disk session cache and never touches a session except through the actions you trigger.
 
 ```
-── New Named ──
-── New Untracked ──
-── Resume ──
-── Exit ──
+  + new session
+  ◇ project…
+  ▦ new from layout…
+★ ● api-server      2h   3 tabs        ╭─ api-server ───────────────╮
+  ● scratch        12m   1 tab         │ status      ● active       │
+  ◆ notes           5m   (current)     │ created     2h ago         │
+  ○ old-demo         3d  resurrect     │ last used   2h ago         │
+                                        │ pinned      yes            │
+                                        │ cwd         ~/code/api     │
+                                        ├─────────────────────────────┤
+                                        │▸ 1. server                 │
+                                        │    nvim src/main.rs        │
+                                        │    cargo watch -x run      │
+                                        │  2. logs                   │
+                                        ╰─────────────────────────────╯
+> _
 ```
 
-The `──` wrappers visually separate actions from real session names and prevent name collisions (no real Zellij session is named `── New Named ──`).
+`★` pinned · `●` active · `○` exited (resurrect) · `◆` current session.
 
-Selecting `── Resume ──` opens a sub-picker that lists all existing Zellij sessions with their creation time and status. The sub-picker supports fuzzy search — type to filter sessions instantly. A live preview on the right shows detailed session info: tab names, pane titles, age, and status.
+## Features
 
-### The fzf picker (lines 238–264)
+- Unified picker — actions, pinned/active/exited sessions, and the current session all in one fuzzy list, ordered pinned → active → exited → current.
+- Live preview — tabs (▸ marks the active one), deduped panes with their running command, created/last-used time, cwd, pin state.
+- Project sessions — pick a project directory from `zoxide`, or a scan for git repositories under configured roots (`fd`/`find`), and jump straight into a session for it.
+- Layout sessions — start a new session from any `*.kdl` layout, including Zellij's built-ins.
+- Session actions from the picker: delete/kill, purge all exited, rename, pin/unpin.
+- MRU + pins persisted across restarts; typed names that don't match anything create a new session.
+- In-session switching — run it from inside Zellij and it uses `switch-session` instead of nesting.
+- Renders in your Zellij theme's colors automatically (or no color at all under `NO_COLOR`).
+- Guarded auto-start snippet for bash/zsh/fish, so a new terminal window drops you straight into the picker.
+- `--doctor` for environment diagnostics; `--dry-run` to see the exact command without running it.
 
-fzf is invoked with these key settings:
+## Requirements
 
-| Flag | Purpose |
-|---|---|
-| `--ansi` | Interpret ANSI escape codes in preview output |
-| `--layout=reverse` | Top-down list, most recent at top |
-| `--border=sharp` | ASCII box-drawing (`──`, `│`, etc.) |
-| `--preview-window=right:60%:border-sharp` | Right panel takes 60% width |
-| `--bind=ctrl-n:become(...)` | Ctrl+n immediately selects "New Untracked"; Ctrl+N for "New Named" |
-| `--color=...` | Exact gruber-darker palette (see Theme section below) |
+- `bash` ≥ 4.2 (macOS ships 3.2 — `brew install bash`, no need to change your login shell)
+- `fzf` ≥ 0.38
+- `zellij` ≥ 0.39 (≥ 0.44 to switch sessions from inside Zellij)
+- Optional: `zoxide` (project picker), `fd` (project picker, faster directory scan)
 
-The `become` action replaces fzf's own process — when you press Ctrl+n, fzf exits and echoes the special entry string back, which the `case` statement on line 266 catches.
-
-#### Preview: how it communicates with fzf (lines 254–263)
-
-This is the trickiest part. fzf's `--preview` runs a shell command for every highlighted line, substituting `{}` with the current item. We need that command to call our `session_preview` function — but the preview runs in a separate process that doesn't inherit bash function definitions.
-
-The solution: `$(declare -f session_preview parse_metadata_file _box_top ...)` inline-expands the function source code into the preview command string at script-evaluation time. So fzf receives a fully self-contained bash script:
+## Install
 
 ```bash
-item=memora;
-session_preview() {
-    ... entire function body inlined ...
-}
-parse_metadata_file() {
-    ... entire function body inlined ...
-}
-_box_top() { ... }
-...
-session_preview "$item"
+git clone https://github.com/AjayVasan/Zellij-Jolt
+cd Zellij-Jolt
+./install.sh
 ```
 
-The `item={}` line lets fzf substitute the current entry into `$item`. Every function the preview needs must be listed in `declare -f` — missing one means a "command not found" error in the preview pane.
-
-`ZELLIJ_SESSION_DIR` is exported (line 11) so the preview subshell can read it.
-
-### Session metadata parser (lines 46–103)
-
-Zellij serializes session state to `~/.cache/zellij/contract_version_1/session_info/<name>/session-metadata.kdl`. A partial KDL state machine parser in pure bash reads it:
+This copies `zellij-jolt.sh` to `${XDG_DATA_HOME:-~/.local/share}/zellij-jolt/`, symlinks it at `${XDG_BIN_HOME:-~/.local/bin}/zellij-jolt`, checks dependency versions, and prints the config snippet for any terminal emulator it detects (see Setup below). On GNOME it also offers to register a keyboard shortcut (opt-in, skipped entirely under `--yes` or when stdin isn't a terminal; the shortcut opens zellij-jolt in the first terminal it finds — alacritty, kitty, wezterm, ghostty, foot or gnome-terminal — and is skipped when there is none).
 
 ```
-tabs {
-    tab { position 0  name "rca"   ... }
-    tab { position 1  name "clauder" ... }
-}
-panes {
-    pane { id 4  is_plugin false  title "✳ Claude Code"  tab_position 1 ... }
-    pane { id 7  is_plugin true   title "zellij:tab-bar"                ... }
-}
+Usage: install.sh [--yes] [--no-shortcut] [--uninstall] [--help]
+
+  --yes           Non-interactive: accept every default, never prompt.
+  --no-shortcut   Skip the GNOME keyboard-shortcut question entirely.
+  --uninstall     Remove the installed script and symlink, then exit.
+  --help          Show this help.
+
+Stdin that isn't a terminal (e.g. piped input) behaves like --yes.
 ```
 
-The parser tracks a two-level state machine:
+`./install.sh --uninstall` removes the symlink and install directory only — it never touches shell rc files, terminal config, or GNOME shortcuts.
 
-| State | Entry | Content handled |
-|---|---|---|
-| `section=""` | looks for `tabs {` or `panes {` | transitions to section |
-| `section="tabs"` | `tab {` / `}` | extracts `position`, `name` |
-| `section="panes"` | `pane {` / `}` | extracts `title`, `is_plugin`, `tab_position` |
+Make sure `${XDG_BIN_HOME:-~/.local/bin}` is on your `PATH`.
 
-Output is pipe-separated lines consumed by the preview renderer:
+## Setup
 
-```
-tab|0|rca
-tab|1|clauder
-tab|2|m prod
-tab|3|Tab #6
-pane|1|✳ Claude Code
-pane|2|ssh ubuntu@memora.nitrocommerce.io
+Pick one: make `zellij-jolt` your terminal's shell (so every new window opens the picker), or add the `--init-shell` snippet to your shell rc (so an interactive shell drops into the picker right after it starts). Either way, finish with the in-Zellij keybinding below so you can summon the picker without leaving a session.
+
+**Alacritty** (`alacritty.toml`):
+```toml
+[terminal]
+shell = "/home/you/.local/bin/zellij-jolt"
 ```
 
-Only non-plugin panes (`is_plugin false`) are emitted — no tab-bar or status-bar noise. Exited sessions with no cache show "no cached data" gracefully.
+**Ghostty** (`config`):
+```
+command = /home/you/.local/bin/zellij-jolt
+```
 
-### Action dispatch (lines 266–286)
+**Kitty** (`kitty.conf`):
+```
+shell /home/you/.local/bin/zellij-jolt
+```
 
-The `case` statement maps fzf's output to a Zellij command:
+**WezTerm** (`wezterm.lua`):
+```lua
+config.default_prog = { "/home/you/.local/bin/zellij-jolt" }
+```
 
-| fzf output | Action |
-|---|---|
-| `── New Named ──` | prompts for name → `exec zellij -s "$name"` |
-| `── New Untracked ──` | `exec zellij` — creates a random animal-name session |
-| `── Resume ──` | opens a sub-picker with fuzzy search → `exec zellij attach <session>` |
-| `── Exit ──` or empty | `exit 0` — closes the terminal |
+**foot** (`foot.ini`):
+```ini
+[main]
+shell=/home/you/.local/bin/zellij-jolt
+```
 
-`exec` replaces the script process with zellij — no zombie processes, clean process tree.
+**Shell rc alternative** — instead of replacing the terminal's shell, add a guarded auto-start line to your interactive shell's rc file:
 
----
+```bash
+zellij-jolt --init-shell zsh >> ~/.zshrc   # or bash / fish
+```
 
-## Theme system
+This only fires outside Zellij/tmux, on a real tty, in an interactive shell, when `$TERM` isn't `dumb` or `vscode`, and when `JOLT_SKIP` isn't set — so it's safe to leave in your rc permanently.
 
-### Source: Zellij config
-
-The launcher reads its color palette from `~/.config/zellij/config.kdl`:
+**In-Zellij keybinding** — add to your Zellij `config.kdl` so `Alt s` opens the picker as a floating pane without leaving your session:
 
 ```kdl
-themes {
-    gruber-darker {
-        fg 244 244 244
-        bg 24 24 24
-        red 244 56 65
-        green 115 217 54
-        yellow 255 221 126
-        blue 150 166 200
-        magenta 158 149 199
-        orange 255 79 90
-        cyan 149 169 159
-        black 0 0 0
-        white 228 228 228
+keybinds {
+    shared_except "locked" {
+        bind "Alt s" { Run "zellij-jolt" { floating true; close_on_exit true; }; }
     }
 }
-theme "gruber-darker"
 ```
 
-### Applied in two layers
+## Keys
 
-**1. fzf chrome** — `FZF_COLORS` (lines 28–39) maps theme colors to fzf's UI slots via hex codes:
-
-| Theme color | fzf role | Hex |
+| Key | Action | Config override |
 |---|---|---|
-| `bg 24 24 24` | list background, gutter | `#181818` |
-| — | selected line bg | `#242424` |
-| `fg 244 244 244` | title text, labels, tab names | `#f4f4f4` |
-| `white 228 228 228` | fzf default fg, preview fg | `#e4e4e4` |
-| `green 115 217 54` | border, pointer, highlight, marker | `#73d936` |
-| `cyan 149 169 159` | info line, prompt | `#95a99f` |
-| `yellow 255 221 126` | spinner | `#ffdd7e` |
-| — | header text | `#505050` |
-| — | preview bg | `#101010` |
+| `enter` | open the selected session / create the typed name | — |
+| `alt-enter` | create a session named after the query | `KEY_CREATE` |
+| `ctrl-d` | kill / delete the selected session | `KEY_DELETE` |
+| `alt-d` | delete all exited sessions | `KEY_PURGE` |
+| `ctrl-r` | rename the selected session | `KEY_RENAME` |
+| `ctrl-t` | pin / unpin the selected session | `KEY_PIN` |
+| `ctrl-o` | open a project directory as a session | `KEY_PROJECT` |
+| `ctrl-l` | new session from a layout | `KEY_LAYOUT` |
+| `ctrl-/` | toggle the preview | `KEY_PREVIEW` |
+| `?` | key help in the preview | `KEY_HELP` |
+| `esc` | back / quit | — |
 
-**2. Preview pane** — 24-bit ANSI escape sequences (lines 17–27) use `$'...'` syntax to embed the actual ESC byte at variable definition time, not at print time:
+Override values must be plain fzf key names (`ctrl-d`, `alt-enter`, `ctrl-/`, `?`, `f1`, …); anything else is rejected with a warning and falls back to the default.
 
-```bash
-C_BD=$'\e[38;2;115;217;54m'   # green borders
-C_TL=$'\e[1;38;2;244;244;244m' # bold white title
-C_VL=$'\e[38;2;255;221;126m'   # yellow values (age)
-C_ST=$'\e[38;2;149;169;159m'   # cyan tab position numbers
-```
+## Configuration
 
-Each `\e` becomes ASCII byte 0x1B in the variable value, so `printf "$C_BD"` writes the escape sequence directly — no format-string interpretation needed. This also survives subshells and fzf's `declare -f` inlining.
+File: `${XDG_CONFIG_HOME:-~/.config}/zellij-jolt/config`, plain `KEY=VALUE` lines (`#` comments, blank lines ignored). Only the keys below are recognized — unknown keys and malformed lines are warned about and skipped. Values are taken literally (no shell expansion, no sourcing/eval), except a leading `~` or `~/` is expanded to `$HOME`.
 
-### Render helpers (lines 106–113)
-
-Six `_box_*` functions abstract the preview box-drawing:
-
-```
-_box_top     → ╭──────────────────────────────────────────────╮
-_box_sep     → ├──────────────────────────────────────────────┤
-_box_bot     → ╰──────────────────────────────────────────────╯
-_box_title   → │ session_name                                 │
-_box_label   → │ Age:    2h 25m                               │
-_box_tab     → │  0.  rca                                    │
-_box_pane    → │       └ OC | False split rate root cause    │
-_box_line    → │  Some text                                  │
-```
-
-Each wraps content between green box borders (`C_BD`), applies the correct content color (`C_TL`, `C_VL`, etc.), then resets with `C_RESET`. Width is fixed at 46 visible characters — content is truncated with `${var:0:N}` to prevent overflow.
-
-### Switching themes
-
-To use a different Zellij theme, update the 11 color variables at the top of the script. The Zellij theme name is a convention — you could also read the KDL config at runtime (but the script keeps it hardcoded for speed and simplicity).
-
----
-
-## Installation walkthrough
-
-### What `install.sh` does
-
-1. **Copies the script** to `~/.local/share/zellij-jolt/zellij-jolt.sh`
-2. **Symlinks** to `~/.local/bin/zellij-jolt` (make sure `~/.local/bin` is on your PATH)
-3. **Checks dependencies** — `zellij`, `fzf`, `alacritty`. Shows Arch pacman commands for any missing. Optionally continues anyway.
-4. **Offers GNOME shortcut registration** — only runs if `$XDG_CURRENT_DESKTOP == "GNOME"`. Uses `gsettings` to add custom keybindings:
-   - `custom<N>: <Control>Return → alacritty -e zellij-jolt`
-   - `custom<N>: <Control><Shift>Return → alacritty -e zellij-jolt`
-   
-   The `gsettings_set_shortcut` function (lines 26–69) scans existing custom slots, reuses one if the same binding already exists (updates its command), or appends a new slot. This avoids accumulating dead shortcut entries on reinstall.
-
-5. **Prints Alacritty config instructions** for the `shell` method.
-
-### Manual install
-
-```bash
-cp zellij-jolt.sh ~/.local/bin/zellij-jolt
-chmod +x ~/.local/bin/zellij-jolt
-```
-
-### Uninstall
-
-```bash
-rm ~/.local/bin/zellij-jolt
-rm -rf ~/.local/share/zellij-jolt
-```
-
-Remove Alacritty `[terminal] shell` line if you added one, and delete the GNOME shortcuts from Settings → Keyboard → Shortcuts.
-
----
-
-## File structure
-
-```
-zellij-jolt.sh     # The entire launcher — self-contained
-install.sh          # Installer with dep checking + GNOME shortcut setup
-README.md           # This file
-.gitignore
-```
-
-No config files, no plugins, no wasm, no dependencies beyond `zellij` and `fzf`.
-
----
-
-## Dependencies
-
-| Tool | Required? | Version notes |
+| Key | Default | Meaning |
 |---|---|---|
-| `zellij` | yes | 0.40+ for `list-sessions -s` (short format). Tested on 0.44.3 |
-| `fzf` | yes | 0.48+ for `--border-label` and `become` action. Tested on 0.74.1 |
-| `alacritty` | no (for shortcuts) | Any version. Works with any terminal that supports `-e` or `shell` config |
-| `bash` | yes | Uses `$'...'`, `declare -f`, `exec < /dev/tty`. Bash 4+ |
+| `PROJECT_ROOTS` | `~/projects ~/code ~/src ~/dev` | Space-separated parent directories scanned for git repositories by the project picker (`ctrl-o`), used when `zoxide` has no candidates |
+| `PROJECT_DEPTH` | `3` | Max directory depth to search under each root when `fd`/`find` is used |
+| `DEFAULT_LAYOUT` | *(empty)* | Layout name applied to new sessions created via the project picker |
+| `PREVIEW` | `on` | `on`/`off` — show the preview pane |
+| `PREVIEW_POS` | `right` | `right`/`left`/`top`/`bottom` — preview pane position (invalid values fall back to `right`) |
+| `SHOW_EXITED` | `on` | `on`/`off` — list exited sessions (pinned ones always show) |
+| `THEME` | `auto` | `auto` (read from Zellij config), `none` (no color), or a specific Zellij theme name |
+| `CONFIRM_DELETE` | `on` | `on`/`off` — confirm before delete/kill/purge |
+| `KEY_DELETE` | `ctrl-d` | Keybinding override, see Keys above |
+| `KEY_PURGE` | `alt-d` | Keybinding override |
+| `KEY_RENAME` | `ctrl-r` | Keybinding override |
+| `KEY_PIN` | `ctrl-t` | Keybinding override |
+| `KEY_PROJECT` | `ctrl-o` | Keybinding override |
+| `KEY_LAYOUT` | `ctrl-l` | Keybinding override |
+| `KEY_PREVIEW` | `ctrl-/` | Keybinding override |
+| `KEY_HELP` | `?` | Keybinding override |
+| `KEY_CREATE` | `alt-enter` | Keybinding override |
 
----
-
-## Picker key bindings
-
-| Key | Action |
-|---|---|
-| `Ctrl+n` | Jump to "New Untracked" |
-| `Ctrl+N` (shift) | Jump to "New Named" (prompt for name) |
-| `Enter` | Attach/create selected session |
-| `Esc` / `Ctrl+c` | Cancel, exit |
-| `Ctrl+j` / `Ctrl+k` | Move down/up |
-| Any text | Fuzzy filter the session list |
-
-The `become` bindings (Ctrl+n / Ctrl+N) make fzf exit immediately and echo the special option string — faster than manually scrolling to the bottom of the list.
-
----
-
-## How the preview data flows
+Example:
 
 ```
-zellij list-sessions -n
-  → "memora [Created 2h 25m ago]"
-    → parse age from [...], detect ACTIVE/EXITED from (...) 
-
-~/.cache/.../session-metadata.kdl
-  → parse_metadata_file() — state machine KDL parser
-    → tab|0|rca
-      pane|1|✳ Claude Code
-      ...
-        → session_preview() collects into arrays
-          → _box_* functions render with theme colors
-            → output to fzf --preview on highlighted line
+PROJECT_ROOTS=~/code ~/work
+PROJECT_DEPTH=4
+DEFAULT_LAYOUT=dev
+PREVIEW_POS=bottom
+SHOW_EXITED=off
+THEME=none
+KEY_DELETE=ctrl-x
 ```
 
----
+## CLI reference
 
-## Edge cases handled
+```
+zellij-jolt                         picker (default)
+zellij-jolt --list                  print picker rows (used by fzf reload)
+zellij-jolt --preview KEY           render preview for a row key
+zellij-jolt --action ACT KEY        keybind handler: delete|rename|pin|purge
+zellij-jolt --dry-run               print final zellij command instead of exec
+zellij-jolt --init-shell SHELL      print guarded auto-start snippet (bash|zsh|fish)
+zellij-jolt --doctor                environment diagnostics
+zellij-jolt --version | --help
+zellij-jolt --preview-dir DIR       (internal) project preview listing
+```
 
-| Scenario | Behavior |
-|---|---|
-| No Zellij sessions | List shows 4 action options; Resume shows "No sessions" |
-| Session cache missing | Preview shows "(no cached data)" with basic info |
-| Session deleted between list render and attach | `zellij attach` fails, falls through to `zellij -s` (recreates) |
-| Terminal with no TTY | `exec < /dev/tty` reopens the controlling terminal |
-| `zellij` or `fzf` not installed | Script exits immediately with error |
-| Very long session names | Truncated with `${var:0:44}` in preview |
-| Many tabs in session | All displayed; fzf preview scrolls if needed |
+`--preview`, `--list`, `--action` and `--preview-dir` are internal callbacks used by fzf (preview, reload and keybind handlers); you won't normally run them by hand. `--dry-run` runs the picker but prints the `zellij`/`exec` command it would have run instead of executing it — useful for checking what a selection will actually do.
 
----
+## Troubleshooting
+
+- **Preview shows errors / garbled output under zsh** — fixed in v2 (the preview callback now re-invokes the script by absolute path instead of relying on `$SHELL`, which broke under zsh in v1).
+- **`bash: command not found` or version errors on macOS** — macOS ships bash 3.2. Install a newer one with `brew install bash`; you don't need to change your login shell, Zellij-Jolt will use it directly.
+- **Running it from inside a Zellij session** — Zellij-Jolt detects `$ZELLIJ` and uses `zellij action switch-session` instead of starting a nested session. Selecting the session you're already in is a no-op. `switch-session` needs zellij ≥ 0.44; on older versions Zellij-Jolt says so — detach first (Ctrl-o d) and run it outside.
+- **Something looks wrong with versions, theme, or paths** — run `zellij-jolt --doctor`:
+  ```
+  bash 5.3.20 (ok)
+  fzf 0.74.5 (ok)
+  zellij 0.45.1 (ok)
+  cache dir /home/you/.cache/zellij/contract_version_1/session_info
+  theme gruber-darker (legacy palette)
+  zoxide missing
+  fd missing
+  config /home/you/.config/zellij-jolt/config (not found, using defaults)
+  state /home/you/.local/state/zellij-jolt
+  ```
+- **Don't want auto-start in a particular shell** — set `JOLT_SKIP=1` before that shell starts; the `--init-shell` snippet checks for it and no-ops.
+
+## How it works
+
+Zellij-Jolt reads Zellij's own session list (`zellij list-sessions`) and its on-disk session cache (`${XDG_CACHE_HOME:-~/.cache}/zellij/contract_version_*/session_info`) to build the picker and preview — it never creates, modifies, or deletes a session on its own. Every session mutation (delete, purge, rename, pin, attach, create) happens only in direct response to a key you press or a session you select.
+
+## Uninstall
+
+```bash
+./install.sh --uninstall
+```
+
+Then remove any terminal config snippet or `--init-shell` line you added, and delete `${XDG_CONFIG_HOME:-~/.config}/zellij-jolt` and `${XDG_STATE_HOME:-~/.local/state}/zellij-jolt` if you want to drop your config/MRU/pins too.
+
+## Roadmap
+
+**M2 — Ship**: AUR (stable + `-git`), Homebrew tap, Nix package, curl installer, man page, shell completions, CI (Linux + macOS, shellcheck, shfmt), demo GIF, comparison table.
+
+**M3 — Differentiators**: live `dump-screen` preview, SSH remote sessions, git worktree/branch sessions, AI-agent status column, session notes, doctor-reap of zombie sessions.
 
 ## License
 

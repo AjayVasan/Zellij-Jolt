@@ -1,0 +1,6 @@
+// zellij config fixture: theme resolved from an external theme_dir file
+// (test/fixtures/themes/mytheme.kdl). @DIR@ is replaced by the test with
+// the absolute path to that themes/ directory.
+
+theme_dir "@DIR@"
+theme "mytheme"

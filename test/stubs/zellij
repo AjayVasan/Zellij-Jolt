@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Stub `zellij` binary for bats tests.
+#
+# Logs every invocation to $STUB_LOG (one line per call, args separated by
+# \x1f so arguments containing spaces/tabs are unambiguous), then replays
+# canned output from the file named by $STUB_LS for the commands the test
+# suite cares about.
+set -u
+
+{
+  printf '%s\x1f' "$@"
+  printf '\n'
+} >>"${STUB_LOG:-/dev/null}"
+
+cmd="${1:-}"
+shift || true
+
+# True (rc 0) when $STUB_LS is set and points at a non-empty file.
+_stub_ls_present() {
+  [ -n "${STUB_LS:-}" ] && [ -s "$STUB_LS" ]
+}
+
+# Echo the first positional (non-flag) argument, e.g. the session name in
+# `kill-session -f NAME` or `delete-session NAME -y`. Flags (anything
+# starting with -) are skipped; the first match wins. A literal `--` ends
+# option parsing: the argument after it is returned even if it starts with -.
+_first_positional() {
+  local after=""
+  for a in "$@"; do
+    if [ -n "$after" ]; then
+      printf '%s\n' "$a"
+      return 0
+    fi
+    case "$a" in
+    --) after=1 ;;
+    -*) ;;
+    *)
+      printf '%s\n' "$a"
+      return 0
+      ;;
+    esac
+  done
+  return 1
+}
+
+case "$cmd" in
+list-sessions | ls)
+  mode=""
+  for a in "$@"; do
+    case "$a" in
+    -n) mode="n" ;;
+    -s) mode="s" ;;
+    esac
+  done
+  if ! _stub_ls_present; then
+    echo "No active zellij sessions found." >&2
+    exit 1
+  fi
+  if [ "$mode" = "s" ]; then
+    sed -E 's/ \[Created.*$//' "$STUB_LS"
+  else
+    cat "$STUB_LS"
+  fi
+  exit 0
+  ;;
+# STUB_ZELLIJ_VERSION overrides the reported version (default 0.45.1).
+--version)
+  echo "zellij ${STUB_ZELLIJ_VERSION:-0.45.1}"
+  exit 0
+  ;;
+# STUB_RC_KILL / STUB_RC_DELETE: when set, kill-session / delete-session of
+# a session listed in $STUB_LS exits with that rc instead of 0 (simulates a
+# session that vanished between listing and acting on it).
+kill-session)
+  target="$(_first_positional "$@")"
+  if _stub_ls_present && grep -qF -- "$target" "$STUB_LS"; then
+    exit "${STUB_RC_KILL:-0}"
+  fi
+  echo "No session named \"$target\" found." >&2
+  exit 1
+  ;;
+delete-session)
+  target="$(_first_positional "$@")"
+  if _stub_ls_present && grep -qF -- "$target" "$STUB_LS"; then
+    exit "${STUB_RC_DELETE:-0}"
+  fi
+  echo "No session named \"$target\" found." >&2
+  exit 2
+  ;;
+*)
+  exit 0
+  ;;
+esac

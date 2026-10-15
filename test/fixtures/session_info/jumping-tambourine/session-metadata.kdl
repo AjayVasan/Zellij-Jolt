@@ -1,0 +1,785 @@
+name "jumping-tambourine"
+tabs {
+    tab {
+        position 0
+        name "Bulk Data"
+        active false
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        viewport_rows 60
+        viewport_columns 240
+        display_area_columns 240
+        display_area_rows 62
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 0
+    }
+    tab {
+        position 1
+        name "Tab #5"
+        active false
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        viewport_rows 60
+        viewport_columns 240
+        display_area_columns 240
+        display_area_rows 62
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 4
+    }
+    tab {
+        position 2
+        name "Tab #7"
+        active false
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        active_swap_layout_name "BASE"
+        viewport_rows 60
+        viewport_columns 240
+        display_area_columns 240
+        display_area_rows 62
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 3
+        selectable_floating_panes_count 0
+        tab_id 6
+    }
+    tab {
+        position 3
+        name "Token Broker"
+        active true
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        other_focused_clients 1
+        viewport_rows 60
+        viewport_columns 240
+        display_area_columns 240
+        display_area_rows 62
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 7
+    }
+    tab {
+        position 4
+        name "Tab #9"
+        active false
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        viewport_rows 60
+        viewport_columns 240
+        display_area_columns 240
+        display_area_rows 62
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 8
+    }
+    tab {
+        position 5
+        name "Tab #10"
+        active false
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        viewport_rows 60
+        viewport_columns 240
+        display_area_columns 240
+        display_area_rows 62
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 9
+    }
+    tab {
+        position 6
+        name "Tab #11"
+        active false
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        viewport_rows 60
+        viewport_columns 240
+        display_area_columns 240
+        display_area_rows 62
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 10
+    }
+    tab {
+        position 7
+        name "zellij zolt"
+        active false
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        viewport_rows 60
+        viewport_columns 240
+        display_area_columns 240
+        display_area_rows 62
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 11
+    }
+}
+panes {
+    pane {
+        id 15
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "✳ Broken state research and brainstorm"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 1
+        pane_content_y 1
+        pane_rows 60
+        pane_content_rows 60
+        pane_columns 240
+        pane_content_columns 240
+        cursor_coordinates_in_pane 2 57
+        terminal_command "bash /home/ajay/.local/bin/claude-zellij --pane-id 2238f628-500c-4dd0-be97-c465794134c8 --dangerously-skip-permissions --dangerously-skip-permissions"
+        is_selectable true
+        tab_position 7
+    }
+    pane {
+        id 23
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:tab-bar"
+        is_selectable false
+        tab_position 7
+    }
+    pane {
+        id 24
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 61
+        pane_content_y 61
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:status-bar"
+        is_selectable false
+        tab_position 7
+    }
+    pane {
+        id 14
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "ssh user@example.com"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 1
+        pane_content_y 1
+        pane_rows 60
+        pane_content_rows 60
+        pane_columns 240
+        pane_content_columns 240
+        cursor_coordinates_in_pane 25 39
+        terminal_command "ssh user@example.com"
+        is_selectable true
+        tab_position 6
+    }
+    pane {
+        id 21
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:tab-bar"
+        is_selectable false
+        tab_position 6
+    }
+    pane {
+        id 22
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 61
+        pane_content_y 61
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:status-bar"
+        is_selectable false
+        tab_position 6
+    }
+    pane {
+        id 5
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "ssh user@example.com"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 1
+        pane_content_y 1
+        pane_rows 60
+        pane_content_rows 60
+        pane_columns 240
+        pane_content_columns 240
+        cursor_coordinates_in_pane 25 39
+        terminal_command "ssh user@example.com"
+        is_selectable true
+        tab_position 1
+    }
+    pane {
+        id 9
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:tab-bar"
+        is_selectable false
+        tab_position 1
+    }
+    pane {
+        id 10
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 61
+        pane_content_y 61
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:status-bar"
+        is_selectable false
+        tab_position 1
+    }
+    pane {
+        id 12
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "✳ Claude Code"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 1
+        pane_content_y 1
+        pane_rows 60
+        pane_content_rows 60
+        pane_columns 240
+        pane_content_columns 240
+        cursor_coordinates_in_pane 2 57
+        terminal_command "claude --dangerously-skip-permissions"
+        is_selectable true
+        tab_position 4
+    }
+    pane {
+        id 17
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:tab-bar"
+        is_selectable false
+        tab_position 4
+    }
+    pane {
+        id 18
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 61
+        pane_content_y 61
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:status-bar"
+        is_selectable false
+        tab_position 4
+    }
+    pane {
+        id 13
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "✳ Zellij panel title not changing after update"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 1
+        pane_content_y 1
+        pane_rows 60
+        pane_content_rows 60
+        pane_columns 240
+        pane_content_columns 240
+        cursor_coordinates_in_pane 2 57
+        terminal_command "bash /home/ajay/.local/bin/claude-zellij --pane-id ae2e9576-c7d0-48b5-a30b-ffc0aa5cc34b --dangerously-skip-permissions --dangerously-skip-permissions"
+        is_selectable true
+        tab_position 5
+    }
+    pane {
+        id 19
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:tab-bar"
+        is_selectable false
+        tab_position 5
+    }
+    pane {
+        id 20
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 61
+        pane_content_y 61
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:status-bar"
+        is_selectable false
+        tab_position 5
+    }
+    pane {
+        id 0
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "Bulk Datapulse"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 1
+        pane_content_y 1
+        pane_rows 60
+        pane_content_rows 60
+        pane_columns 240
+        pane_content_columns 240
+        cursor_coordinates_in_pane 2 57
+        terminal_command "claude --dangerously-skip-permissions"
+        is_selectable true
+        tab_position 0
+    }
+    pane {
+        id 1
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:tab-bar"
+        is_selectable false
+        tab_position 0
+    }
+    pane {
+        id 2
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 61
+        pane_content_y 61
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:status-bar"
+        is_selectable false
+        tab_position 0
+    }
+    pane {
+        id 0
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed true
+        title "(.) - zellij:link"
+        exited false
+        is_held false
+        pane_x 60
+        pane_content_x 61
+        pane_y 16
+        pane_content_y 17
+        pane_rows 30
+        pane_content_rows 28
+        pane_columns 120
+        pane_content_columns 118
+        plugin_url "zellij:link"
+        is_selectable true
+        tab_position 0
+    }
+    pane {
+        id 8
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "ssh user@example.com"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 1
+        pane_content_y 2
+        pane_rows 60
+        pane_content_rows 59
+        pane_columns 120
+        pane_content_columns 119
+        cursor_coordinates_in_pane 25 44
+        terminal_command "ssh user@example.com"
+        is_selectable true
+        tab_position 2
+    }
+    pane {
+        id 9
+        is_plugin false
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "ssh user@example.com"
+        exited false
+        is_held false
+        pane_x 120
+        pane_content_x 120
+        pane_y 1
+        pane_content_y 2
+        pane_rows 12
+        pane_content_rows 10
+        pane_columns 120
+        pane_content_columns 120
+        cursor_coordinates_in_pane 25 10
+        terminal_command "ssh user@example.com"
+        is_selectable true
+        tab_position 2
+    }
+    pane {
+        id 10
+        is_plugin false
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "ssh user@example.com"
+        exited false
+        is_held false
+        pane_x 120
+        pane_content_x 120
+        pane_y 13
+        pane_content_y 14
+        pane_rows 48
+        pane_content_rows 47
+        pane_columns 120
+        pane_content_columns 120
+        cursor_coordinates_in_pane 25 40
+        terminal_command "ssh user@example.com"
+        is_selectable true
+        tab_position 2
+    }
+    pane {
+        id 13
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:tab-bar"
+        is_selectable false
+        tab_position 2
+    }
+    pane {
+        id 14
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 61
+        pane_content_y 61
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:status-bar"
+        is_selectable false
+        tab_position 2
+    }
+    pane {
+        id 11
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "✳ Shopify access token usage audit"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 1
+        pane_content_y 1
+        pane_rows 60
+        pane_content_rows 60
+        pane_columns 240
+        pane_content_columns 240
+        cursor_coordinates_in_pane 2 57
+        terminal_command "claude --dangerously-skip-permissions"
+        is_selectable true
+        tab_position 3
+    }
+    pane {
+        id 15
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:tab-bar"
+        is_selectable false
+        tab_position 3
+    }
+    pane {
+        id 16
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zellij:status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 61
+        pane_content_y 61
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 240
+        pane_content_columns 240
+        plugin_url "zellij:status-bar"
+        is_selectable false
+        tab_position 3
+    }
+}
+connected_clients 1
+web_clients_allowed false
+web_client_count 0
+available_layouts {
+    default source="built-in"
+    classic source="built-in"
+    compact source="built-in"
+    disable-status-bar source="built-in"
+    strider source="built-in"
+}
+tab_history {
+    client {
+        id 1
+        history 6 4 8 9 10 0 11
+    }
+}
+pane_history {
+    client {
+        id 1
+        history {
+            pane_id type="terminal" 9
+            pane_id type="terminal" 3
+            pane_id type="terminal" 1
+            pane_id type="terminal" 2
+            pane_id type="terminal" 6
+            pane_id type="terminal" 10
+            pane_id type="terminal" 8
+            pane_id type="terminal" 5
+            pane_id type="terminal" 12
+            pane_id type="terminal" 13
+            pane_id type="terminal" 14
+            pane_id type="terminal" 0
+            pane_id type="terminal" 15
+            pane_id type="terminal" 11
+        }
+    }
+}
+creation_time 1241

@@ -1,0 +1,303 @@
+name "appr"
+tabs {
+    tab {
+        position 0
+        name "Tab #1"
+        active false
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        viewport_rows 54
+        viewport_columns 213
+        display_area_columns 213
+        display_area_rows 56
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 0
+    }
+    tab {
+        position 1
+        name "Tab #2"
+        active false
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        viewport_rows 54
+        viewport_columns 213
+        display_area_columns 213
+        display_area_rows 56
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 1
+    }
+    tab {
+        position 2
+        name "Tab #3"
+        active true
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        other_focused_clients 1
+        viewport_rows 54
+        viewport_columns 213
+        display_area_columns 213
+        display_area_rows 56
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 2
+    }
+}
+panes {
+    pane {
+        id 2
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "zsh in <ajay>"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 1
+        pane_y 1
+        pane_content_y 2
+        pane_rows 54
+        pane_content_rows 52
+        pane_columns 213
+        pane_content_columns 211
+        cursor_coordinates_in_pane 3 16
+        is_selectable true
+        tab_position 2
+    }
+    pane {
+        id 5
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "tab-bar"
+        is_selectable false
+        tab_position 2
+    }
+    pane {
+        id 6
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 55
+        pane_content_y 55
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "status-bar"
+        is_selectable false
+        tab_position 2
+    }
+    pane {
+        id 0
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "OC | You are creating an (@plan subagent)"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 1
+        pane_y 1
+        pane_content_y 2
+        pane_rows 54
+        pane_content_rows 52
+        pane_columns 213
+        pane_content_columns 211
+        is_selectable true
+        tab_position 0
+    }
+    pane {
+        id 1
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "tab-bar"
+        is_selectable false
+        tab_position 0
+    }
+    pane {
+        id 2
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 55
+        pane_content_y 55
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "status-bar"
+        is_selectable false
+        tab_position 0
+    }
+    pane {
+        id 0
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed true
+        title "(.) - zellij:link"
+        exited false
+        is_held false
+        pane_x 71
+        pane_content_x 72
+        pane_y 17
+        pane_content_y 18
+        pane_rows 34
+        pane_content_rows 32
+        pane_columns 142
+        pane_content_columns 140
+        plugin_url "zellij:link"
+        is_selectable true
+        tab_position 0
+    }
+    pane {
+        id 1
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "π: memora_issues"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 1
+        pane_y 1
+        pane_content_y 2
+        pane_rows 54
+        pane_content_rows 52
+        pane_columns 213
+        pane_content_columns 211
+        cursor_coordinates_in_pane 4 51
+        is_selectable true
+        tab_position 1
+    }
+    pane {
+        id 3
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "tab-bar"
+        is_selectable false
+        tab_position 1
+    }
+    pane {
+        id 4
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 55
+        pane_content_y 55
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "status-bar"
+        is_selectable false
+        tab_position 1
+    }
+}
+connected_clients 1
+web_clients_allowed false
+web_client_count 0
+available_layouts {
+    default source="built-in"
+    classic source="built-in"
+    compact source="built-in"
+    disable-status-bar source="built-in"
+    strider source="built-in"
+}
+tab_history {
+    client {
+        id 1
+        history 0 1
+    }
+}
+pane_history {
+    client {
+        id 1
+        history {
+            pane_id type="terminal" 0
+            pane_id type="terminal" 1
+            pane_id type="terminal" 2
+        }
+    }
+}
+creation_time 24695

@@ -1,0 +1,19 @@
+// zellij config fixture: legacy palette format, hex-string colors.
+
+themes {
+    gruber-darker-hex {
+        fg "#f4f4f4"
+        bg "#181818"
+        red "#f43841"
+        green "#73d936"
+        yellow "#ffdd7e"
+        blue "#96a6c8"
+        magenta "#9e95c7"
+        orange "#ff4f5a"
+        cyan "#95a99f"
+        black "#000000"
+        white "#e4e4e4"
+    }
+}
+
+theme "gruber-darker-hex"

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Stub `fzf` binary for install.bats. Only --version is used by install.sh
+# (dependency presence + version-floor check). Real fzf prints just the
+# version (plus optional build info), with no leading "fzf".
+set -u
+
+case "${1:-}" in
+--version)
+  echo "${STUB_FZF_VERSION:-0.74.5 (abc)}"
+  exit 0
+  ;;
+esac
+exit 0

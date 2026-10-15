@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Stub `gsettings` for install.bats. Logs every invocation (args joined by
+# \x1f) to $GSET_LOG so tests can assert on what install.sh did or did not
+# write. `get ... custom-keybindings` replays $GSET_EXISTING (default
+# "@as []") so tests can simulate pre-existing GNOME custom shortcuts and
+# exercise the duplicate/next-slot scan. Never touches a real desktop.
+set -u
+
+{
+  printf '%s\x1f' "$@"
+  printf '\n'
+} >>"${GSET_LOG:-/dev/null}"
+
+cmd="${1:-}"
+case "$cmd" in
+get)
+  key="${3:-}"
+  if [[ "$key" == "custom-keybindings" ]]; then
+    echo "${GSET_EXISTING:-@as []}"
+  else
+    echo "''"
+  fi
+  ;;
+esac
+exit 0

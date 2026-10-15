@@ -1,0 +1,6 @@
+// zellij config fixture: no theme configured at all.
+// theme_load() must fall back to terminal ANSI default colors.
+
+simplified_ui false
+scroll_buffer_size 10000
+copy_on_select true
