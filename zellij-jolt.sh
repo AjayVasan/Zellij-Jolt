@@ -2481,9 +2481,12 @@ main() {
     case "${1:-}" in
         "" | --dry-run)
             [[ ${1:-} == --dry-run ]] && JOLT_DRY_RUN=1
+            JOLT_SAID=""
             config_load
             theme_load
             check_deps || die "missing or outdated dependencies"
+            # fzf would paint over any startup warning: let it be read first.
+            [[ -z ${JOLT_SAID:-} ]] || _pause
             picker_main
             ;;
         --version | -V)

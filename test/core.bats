@@ -187,6 +187,22 @@ setup() {
   assert_output "rc=1"
 }
 
+@test "startup pauses before the picker only when config warned" {
+  picker_main() { echo "PICKER"; }
+  _pause() { echo "PAUSED"; }
+  run main --dry-run
+  assert_success
+  refute_line "PAUSED"
+  assert_line "PICKER"
+  mkdir -p "$XDG_CONFIG_HOME/zellij-jolt"
+  printf 'BOGUS=1\n' >"$XDG_CONFIG_HOME/zellij-jolt/config"
+  run main --dry-run
+  assert_success
+  assert_output --partial "unknown key BOGUS"
+  assert_line --index 1 "PAUSED"
+  assert_line --index 2 "PICKER"
+}
+
 @test "config value with command substitution is kept literally" {
   mkdir -p "$XDG_CONFIG_HOME/zellij-jolt"
   printf '# comment\n\nTHEME='"'"'$(touch %s/pwned)'"'"'\nKEY_PIN=alt-p\n' "$BATS_TEST_TMPDIR" >"$XDG_CONFIG_HOME/zellij-jolt/config"
