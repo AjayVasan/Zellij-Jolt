@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Smoke tests for the test infrastructure itself (stub, helper, fixtures).
-# Deliberately does NOT call jolt_source: zellij-jolt.sh doesn't support
-# JOLT_NO_MAIN yet.
+# Does not call jolt_source: these tests only exercise the stub and
+# fixtures, not the script's functions.
 
 setup() {
   load test_helper

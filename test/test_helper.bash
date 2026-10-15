@@ -31,12 +31,15 @@ jolt_setup() {
   cp -r "$REPO/test/fixtures/session_info/." "$JOLT_CACHE_DIR/"
   chmod -R u+w "$JOLT_CACHE_DIR"
 
+  # Never let die/fallback_shell exec a real login shell under test.
+  export JOLT_NO_FALLBACK=1
+
   unset ZELLIJ ZELLIJ_SESSION_NAME NO_COLOR
 }
 
 # jolt_source — source zellij-jolt.sh with JOLT_NO_MAIN=1 so only its
-# functions are defined (no picker/main dispatch runs). Not used by
-# infra.bats: the script doesn't support JOLT_NO_MAIN yet.
+# functions are defined (no picker/main dispatch runs). infra.bats doesn't
+# need it: it only exercises the stub and fixtures.
 jolt_source() {
   JOLT_NO_MAIN=1 source "$REPO/zellij-jolt.sh"
 }

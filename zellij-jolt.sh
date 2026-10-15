@@ -54,6 +54,48 @@ _jolt_find_cache_dir() {
     printf '%s\n' "${best_dir:-$base/contract_version_1/session_info}"
 }
 
+# _jolt_is_utf8 LOCALE — succeeds for names like en_US.UTF-8 / C.utf8.
+_jolt_is_utf8() {
+    case "$1" in
+        *[Uu][Tt][Ff]8* | *[Uu][Tt][Ff]-8*) return 0 ;;
+    esac
+    return 1
+}
+
+# _jolt_locale_init — width math needs a UTF-8 LC_CTYPE. If the effective
+# locale is not UTF-8, switch to an installed UTF-8 one (C.UTF-8 preferred).
+# Sets JOLT_UTF8=1 on success, 0 when none exists (render then degrades to
+# ASCII so it never splits a multibyte sequence).
+_jolt_locale_init() {
+    local cur="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" l pick=""
+    local -a avail
+    JOLT_UTF8=1
+    _jolt_is_utf8 "$cur" && return 0
+    mapfile -t avail < <(locale -a 2>/dev/null)
+    for l in "${avail[@]}"; do
+        _jolt_is_utf8 "$l" || continue
+        case "$l" in
+            C.[Uu][Tt][Ff]*)
+                pick=$l
+                break
+                ;;
+            en_US.[Uu][Tt][Ff]*) pick=$l ;;
+            *) [[ -n $pick ]] || pick=$l ;;
+        esac
+    done
+    if [[ -z $pick ]]; then
+        JOLT_UTF8=0
+        return 0
+    fi
+    # LC_ALL overrides LC_CTYPE, so when it is set it must be replaced.
+    if [[ -n ${LC_ALL:-} ]]; then
+        export LC_ALL="$pick"
+    else
+        export LC_CTYPE="$pick"
+    fi
+}
+
+_jolt_locale_init
 JOLT_SELF=$(_jolt_resolve_self) || JOLT_SELF="${BASH_SOURCE[0]:-$0}"
 : "${JOLT_CACHE_DIR:=$(_jolt_find_cache_dir)}"
 : "${JOLT_ZELLIJ_CONFIG:=${ZELLIJ_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/zellij/config.kdl}}"
@@ -61,6 +103,8 @@ JOLT_SELF=$(_jolt_resolve_self) || JOLT_SELF="${BASH_SOURCE[0]:-$0}"
 : "${JOLT_STATE_DIR:=${XDG_STATE_HOME:-$HOME/.local/state}/zellij-jolt}"
 JOLT_DRY_RUN="${JOLT_DRY_RUN:-}"
 FZF_VER="${FZF_VER:-}"
+# An inherited FZF_VER is trusted only if it is a plain integer.
+[[ $FZF_VER =~ ^[0-9]+$ ]] || FZF_VER=""
 
 warn() {
     printf 'zellij-jolt: %s\n' "$*" >&2
@@ -76,7 +120,10 @@ fallback_shell() {
         case "${sh##*/}" in
             zellij-jolt | zellij-jolt.sh) sh=/bin/sh ;;
         esac
+        # execfail: a failed exec returns instead of killing the script.
+        shopt -s execfail
         exec "$sh" -l
+        exec /bin/sh -l
     fi
     exit 1
 }
@@ -250,10 +297,14 @@ config_load() {
 # ── render ──────────────────────────────────────────────────────────────
 
 # _char_width CODEPOINT — display width of one code point in REPLY
-# (0 combining, 2 East Asian wide / emoji, 1 otherwise).
+# (0 combining / zero-width / variation selector, 2 East Asian wide or
+# emoji, 1 otherwise).
 _char_width() {
     local c=$1
-    if ((c >= 0x0300 && c <= 0x036F)); then
+    if ((c >= 0x0300 && c <= 0x036F)) ||
+        ((c >= 0x200B && c <= 0x200F)) ||
+        ((c >= 0x20D0 && c <= 0x20FF)) ||
+        ((c >= 0xFE00 && c <= 0xFE0F)); then
         REPLY=0
     elif ((c >= 0x1100 && c <= 0x115F)) ||
         ((c >= 0x2E80 && c <= 0xA4CF)) ||
@@ -272,11 +323,21 @@ _char_width() {
     fi
 }
 
-# dwidth STR — terminal display width of STR.
-dwidth() {
+# The underscore versions return in REPLY without subshells; use them in
+# loops. The plain versions echo and are for one-off/CLI use.
+# Without a UTF-8 locale (JOLT_UTF8=0) every non-ASCII byte renders as "?"
+# so output stays valid and is never cut mid-character.
+
+# _dwidth STR — display width of STR in REPLY.
+_dwidth() {
     local s="$1" i c w=0
+    if [[ $JOLT_UTF8 != 1 ]]; then
+        s=${s//[![:ascii:]]/?}
+        REPLY=${#s}
+        return
+    fi
     if [[ $s != *[![:ascii:]]* ]]; then
-        echo "${#s}"
+        REPLY=${#s}
         return
     fi
     for ((i = 0; i < ${#s}; i++)); do
@@ -284,18 +345,31 @@ dwidth() {
         _char_width "$c"
         w=$((w + REPLY))
     done
-    echo "$w"
+    REPLY=$w
 }
 
-# trunc STR W — STR cut to display width <= W, ending in "…" when cut.
-trunc() {
+# _trunc STR W — STR cut to display width <= W in REPLY, ending in "…"
+# ("~" without UTF-8) when cut.
+_trunc() {
     local s="$1" max="$2" i c ch w=0 out=""
-    if (($(dwidth "$s") <= max)); then
-        printf '%s\n' "$s"
+    if [[ $JOLT_UTF8 != 1 ]]; then
+        s=${s//[![:ascii:]]/?}
+        if ((${#s} <= max)); then
+            REPLY=$s
+        elif ((max <= 0)); then
+            REPLY=""
+        else
+            REPLY="${s:0:max-1}~"
+        fi
+        return
+    fi
+    _dwidth "$s"
+    if ((REPLY <= max)); then
+        REPLY=$s
         return
     fi
     if ((max <= 0)); then
-        echo ""
+        REPLY=""
         return
     fi
     for ((i = 0; i < ${#s}; i++)); do
@@ -306,15 +380,31 @@ trunc() {
         w=$((w + REPLY))
         out+=$ch
     done
-    printf '%s…\n' "$out"
+    REPLY="$out…"
 }
 
-# pad STR W — trunc STR to W and right-pad with spaces to exactly W columns.
+# _pad STR W — _trunc STR to W, right-padded with spaces to W, in REPLY.
+_pad() {
+    local t w="$2"
+    _trunc "$1" "$w"
+    t=$REPLY
+    _dwidth "$t"
+    printf -v REPLY '%s%*s' "$t" $((w > REPLY ? w - REPLY : 0)) ""
+}
+
+dwidth() {
+    _dwidth "$1"
+    echo "$REPLY"
+}
+
+trunc() {
+    _trunc "$1" "$2"
+    printf '%s\n' "$REPLY"
+}
+
 pad() {
-    local s w
-    s=$(trunc "$1" "$2")
-    w=$(dwidth "$s")
-    printf '%s%*s\n' "$s" $(($2 > w ? $2 - w : 0)) ""
+    _pad "$1" "$2"
+    printf '%s\n' "$REPLY"
 }
 
 # ── actions ─────────────────────────────────────────────────────────────
@@ -326,8 +416,8 @@ _bytelen() {
 }
 
 # sanitize_name STR — session-safe name: control chars dropped, "/" → "-",
-# whitespace runs → "-", trimmed, capped at 48 bytes (zellij socket path
-# limit) on a character boundary. Returns 1 when nothing is left.
+# whitespace runs → "-", trimmed of spaces and leading/trailing "-", capped
+# at 48 bytes (zellij socket path limit) on a character boundary. Returns 1 when nothing is left.
 sanitize_name() {
     local s="$1" out="" p
     local -a parts
@@ -339,9 +429,11 @@ sanitize_name() {
     for p in "${parts[@]}"; do
         out+="${out:+-}$p"
     done
+    while [[ $out == -* ]]; do out=${out#-}; done
     while (($(_bytelen "$out") > 48)); do
         out=${out%?}
     done
+    while [[ $out == *- ]]; do out=${out%-}; done
     [[ -n $out ]] || return 1
     printf '%s\n' "$out"
 }

@@ -64,6 +64,12 @@ setup() {
   assert_failure
   run sanitize_name $'a\x01b\tc'
   assert_output "ab-c"
+  run sanitize_name "/tmp/x"
+  assert_output "tmp-x"
+  run sanitize_name " -a- "
+  assert_output "a"
+  run sanitize_name "///"
+  assert_failure
 }
 
 @test "sanitize caps at 48 bytes on a char boundary" {
@@ -83,8 +89,21 @@ setup() {
   assert_output 4
   run dwidth "🚀x"
   assert_output 3
+  run dwidth "❤️"
+  assert_output 1
+  run dwidth "$(printf 'a\342\200\213b')" # a ZWSP b
+  assert_output 2
   run dwidth $'é'
   assert_output 1
+}
+
+@test "underscore render helpers return in REPLY" {
+  _pad "日本" 6
+  [ "$REPLY" = "日本  " ]
+  _trunc "abcdef" 3
+  [ "$REPLY" = "ab…" ]
+  _dwidth "日本x"
+  [ "$REPLY" = 5 ]
 }
 
 @test "pad and trunc" {
@@ -96,6 +115,30 @@ setup() {
   assert_output "abc…"
   run trunc "abcd" 4
   assert_output "abcd"
+}
+
+@test "non-UTF-8 locale is switched to an installed UTF-8 one" {
+  run bash -c 'export LC_ALL=C; JOLT_NO_MAIN=1 source "$REPO/zellij-jolt.sh"; pad "日本語x" 5'
+  assert_success
+  printf '%s' "$output" | iconv -f UTF-8 -t UTF-8 >/dev/null
+  assert_output "日本…"
+}
+
+@test "without any UTF-8 locale render degrades to valid ASCII" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\nprintf "C\\nPOSIX\\n"\n' >"$BATS_TEST_TMPDIR/bin/locale"
+  chmod +x "$BATS_TEST_TMPDIR/bin/locale"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run bash -c 'export LC_ALL=C; JOLT_NO_MAIN=1 source "$REPO/zellij-jolt.sh"; echo "$JOLT_UTF8"; pad "日本語x" 5; pad "✳ ok" 6'
+  assert_success
+  printf '%s' "$output" | iconv -f UTF-8 -t UTF-8 >/dev/null
+  assert_line --index 0 0
+  assert_line --index 1 "????~"
+  assert_line --index 2 "??? ok"
+}
+
+@test "inherited non-numeric FZF_VER is ignored" {
+  FZF_VER=garbage run bash -c 'JOLT_NO_MAIN=1 source "$REPO/zellij-jolt.sh"; echo "[$FZF_VER]"'
+  assert_output "[]"
 }
 
 @test "config defaults" {
