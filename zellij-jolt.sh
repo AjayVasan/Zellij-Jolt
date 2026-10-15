@@ -1,507 +1,453 @@
 #!/usr/bin/env bash
 # zellij-jolt — Jolt into your Zellij sessions
 #
-# Launched by Alacritty (via shell config or -e flag). Shows existing Zellij
-# sessions with fuzzy search, plus options for new sessions. Right preview
-# pane shows session details: tabs, what's running in each, age, status.
-set -euo pipefail
+# A keyboard-first fzf picker for Zellij sessions: switch, create, rename,
+# pin and clean up sessions, open project directories and layouts. Safe to
+# use as a terminal's startup command — on fatal errors it falls back to a
+# login shell instead of closing the window.
+#
+# fzf callbacks re-invoke this script by absolute path ($JOLT_SELF) so they
+# do not depend on the user's $SHELL. Sourcing with JOLT_NO_MAIN=1 defines
+# the functions only (used by the bats test suite).
+set -uo pipefail
 
-VERSION="1.0.0"
-ZELLIJ_SESSION_DIR="${HOME}/.cache/zellij/contract_version_1/session_info"
-export ZELLIJ_SESSION_DIR
+# ── core ────────────────────────────────────────────────────────────────
 
-_load_theme() {
-    # Reads the active Zellij theme from config.kdl and sets color variables.
-    # Works for any theme defined inline (themes { name { ... } }) or in
-    # an external <theme_dir>/<name>.kdl file. Falls back to Zellij's
-    # built-in default palette when no theme is configured.
-    #
-    # Sets these globals: C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN
-    #                     C_HL C_ITA FZF_COLORS
+JOLT_VERSION="2.0.0"
 
-    # ── Helpers for building ANSI 24-bit sequences ──────────────────
-    _rgb()  { printf '\e[38;2;%s;%s;%sm' "$1" "$2" "$3"; }
-    _bold_rgb() { printf '\e[1;38;2;%s;%s;%sm' "$1" "$2" "$3"; }
+# Feature floors.
+JOLT_MIN_BASH="4.2"
+JOLT_MIN_FZF="0.38.0"
+JOLT_MIN_ZELLIJ="0.39.0"
 
-    # ── Default fallback palette (Zellij's built-in default) ────────
-    # When no theme is configured, Zellij uses the terminal's default
-    # color palette (indexed 0-15). We approximate with a neutral dark
-    # scheme matching the commented-out defaults in --dump-config.
-    local dfg="248 248 242" dbg="40 42 54"
-    local dred="255 85 85"  dgreen="80 250 123"
-    local dyellow="241 250 140" dblue="98 114 164"
-    local dmagenta="255 121 198" dorange="255 184 108"
-    local dcyan="139 233 253"    dblack="0 0 0"
-    local dwhite="255 255 255"
-    local config_file theme_name theme_dir all_lines i line
-    declare -gA _raw=()
-    config_file="${ZELLIJ_CONFIG_FILE:-$HOME/.config/zellij/config.kdl}"
-
-    if [[ -f "$config_file" ]]; then
-        # Read config, strip comments, store non-empty lines
-        mapfile -t all_lines < <(
-            while IFS= read -r raw || [[ -n "$raw" ]]; do
-                local trimmed="${raw%%//*}"
-                trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
-                trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-                [[ -z "$trimmed" ]] && continue
-                printf '%s\n' "$trimmed"
-            done < "$config_file"
-        )
-
-        # ── Pass 1: find theme_name, theme_dir ─────────────────────
-        for line in "${all_lines[@]}"; do
-            if [[ "$line" == theme\ \"*\" ]]; then
-                theme_name="${line#*\"}"; theme_name="${theme_name%%\"*}"
-            elif [[ "$line" == theme\ * ]]; then
-                theme_name="${line#theme }"
-            fi
-            if [[ "$line" == theme_dir\ \"*\" ]]; then
-                theme_dir="${line#*\"}"; theme_dir="${theme_dir%%\"*}"
-            fi
-        done
-
-        # ── Pass 2: find matching theme block and extract colors ───
-        if [[ -n "$theme_name" && "$theme_name" != "default" ]]; then
-            local in_themes=0 in_this=0 found=0
-            for line in "${all_lines[@]}"; do
-                if [[ "$in_themes" == 0 && "$line" == "themes {" ]]; then
-                    in_themes=1; continue
-                fi
-                if [[ "$in_themes" == 1 && "$line" == "}" ]]; then
-                    if [[ "$found" == 1 ]]; then break; fi
-                    in_themes=0; continue
-                fi
-                [[ "$in_themes" == 0 ]] && continue
-
-                # Inside themes: find matching name block
-                if [[ "$line" == *"{"* ]] && [[ "$line" != "}" ]]; then
-                    local cand="${line%\{*}"
-                    cand="${cand%"${cand##*[![:space:]]}"}"
-                    in_this=0
-                    if [[ "$cand" == "$theme_name" ]]; then
-                        in_this=1; found=1
-                    fi
-                    continue
-                fi
-                if [[ "$line" == "}" ]]; then
-                    in_this=0; continue
-                fi
-
-                if [[ "$in_this" == 1 ]]; then
-                    local cname _cr _cg _cb
-                    read -r cname _cr _cg _cb <<< "$line"
-                    if [[ -n "$cname" && -n "${_cr:-}" && -n "${_cg:-}" && -n "${_cb:-}" ]]; then
-                        _raw["$cname"]="${_cr} ${_cg} ${_cb}"
-                    fi
-                fi
-            done
-        fi
-    fi
-
-    # ── Apply colors ─────────────────────────────────────────────
-    if [[ ${#_raw[@]} -gt 0 ]]; then
-
-        # If we have a theme name, apply its colors
-        if [[ -n "$theme_name" && "$theme_name" != "default" ]]; then
-            if [[ ${#_raw[@]} -gt 0 ]]; then
-                # Map colors from the parsed theme
-                local fg="${_raw[fg]:-$dfg}"   bg="${_raw[bg]:-$dbg}"
-                local red="${_raw[red]:-$dred}" green="${_raw[green]:-$dgreen}"
-                local yellow="${_raw[yellow]:-$dyellow}" blue="${_raw[blue]:-$dblue}"
-                local magenta="${_raw[magenta]:-$dmagenta}" orange="${_raw[orange]:-$dorange}"
-                local cyan="${_raw[cyan]:-$dcyan}" black="${_raw[black]:-$dblack}"
-                local white="${_raw[white]:-$dwhite}"
-
-
-                # Build final color variables
-                C_RESET=$'\e[0m'; C_BOLD=$'\e[1m'
-                C_BD=$(_rgb $green)          # green   — box borders, structural
-                C_TL=$(_bold_rgb $fg)        # bold fg — title
-                C_LB=$(_rgb $fg)             # fg      — labels
-                C_VL=$(_rgb $yellow)         # yellow  — values
-                C_ST=$(_rgb $cyan)           # cyan    — status, tab positions
-                C_TN=$(_rgb $fg)             # fg      — tab names
-                C_PN=$(_rgb $white)          # white   — pane info
-                C_HL=$(_rgb $yellow)         # yellow  — highlight
-                C_ITA=$'\e[3m'              # italic
-
-                # Derive brighter bg for fzf bg+ (mix bg + 15%)
-                local br=0 bg_r bg_g bg_b
-                read -r bg_r bg_g bg_b <<< "$bg"
-                br=$(( bg_r + (255 - bg_r) * 15 / 100 ))
-                local bg_r2=$br
-                br=$(( bg_g + (255 - bg_g) * 15 / 100 ))
-                local bg_g2=$br
-                br=$(( bg_b + (255 - bg_b) * 15 / 100 ))
-                local bg_b2=$br
-
-                # Derive slightly dimmer fg for fzf
-                local fg_r fg_g fg_b
-                read -r fg_r fg_g fg_b <<< "$fg"
-                br=$(( fg_r * 9 / 10 ))
-                local fg2_r=$br
-                br=$(( fg_g * 9 / 10 ))
-                local fg2_g=$br
-                br=$(( fg_b * 9 / 10 ))
-                local fg2_b=$br
-
-                FZF_COLORS="\
-bg:$(printf '#%02x%02x%02x' $bg_r $bg_g $bg_b),\
-bg+:$(printf '#%02x%02x%02x' $bg_r2 $bg_g2 $bg_b2),\
-fg:$(printf '#%02x%02x%02x' $fg2_r $fg2_g $fg2_b),\
-fg+:$(printf '#%02x%02x%02x' $fg_r $fg_g $fg_b),\
-hl:$(printf '#%02x%02x%02x' $green),\
-hl+:$(printf '#%02x%02x%02x' $green),\
-gutter:$(printf '#%02x%02x%02x' $bg_r $bg_g $bg_b),\
-info:$(printf '#%02x%02x%02x' $cyan),\
-pointer:$(printf '#%02x%02x%02x' $green),\
-marker:$(printf '#%02x%02x%02x' $green),\
-spinner:$(printf '#%02x%02x%02x' $yellow),\
-header:#505050,\
-prompt:$(printf '#%02x%02x%02x' $cyan),\
-border:$(printf '#%02x%02x%02x' $green),\
-preview-bg:$(printf '#%02x%02x%02x' $bg_r $bg_g $bg_b),\
-preview-fg:$(printf '#%02x%02x%02x' $fg2_r $fg2_g $fg2_b)"
-                return
+# _jolt_resolve_self — absolute path of this script without `readlink -f`
+# (not on stock macOS). Follows one symlink level, e.g. ~/.local/bin link.
+_jolt_resolve_self() {
+    local src="${BASH_SOURCE[0]:-$0}" link dir
+    if [[ -L $src ]]; then
+        link=$(readlink "$src") || link=""
+        if [[ -n $link ]]; then
+            if [[ $link == /* ]]; then
+                src=$link
+            else
+                src="$(dirname "$src")/$link"
             fi
         fi
     fi
-
-    # Fallback — use default palette
-    C_RESET=$'\e[0m'; C_BOLD=$'\e[1m'
-    C_BD=$(_rgb $dgreen);   C_TL=$(_bold_rgb $dfg)
-    C_LB=$(_rgb $dfg);      C_VL=$(_rgb $dyellow)
-    C_ST=$(_rgb $dcyan);    C_TN=$(_rgb $dfg)
-    C_PN=$(_rgb $dwhite)
-    C_HL=$(_rgb $dyellow); C_ITA=$'\e[3m'
-    local dbg_r dbg_g dbg_b dfg_r dfg_g dfg_b
-    read -r dbg_r dbg_g dbg_b <<< "$dbg"
-    read -r dfg_r dfg_g dfg_b <<< "$dfg"
-    FZF_COLORS="\
-bg:#282a36,bg+:#363849,\
-fg:#e4e4e4,fg+:#f8f8f2,\
-hl:$(printf '#%02x%02x%02x' $dgreen),\
-hl+:$(printf '#%02x%02x%02x' $dgreen),\
-gutter:#282a36,\
-info:$(printf '#%02x%02x%02x' $dcyan),\
-pointer:$(printf '#%02x%02x%02x' $dgreen),\
-marker:$(printf '#%02x%02x%02x' $dgreen),\
-spinner:$(printf '#%02x%02x%02x' $dyellow),\
-header:#505050,\
-prompt:$(printf '#%02x%02x%02x' $dcyan),\
-border:$(printf '#%02x%02x%02x' $dgreen),\
-preview-bg:#282a36,\
-preview-fg:#e4e4e4"
+    dir=$(cd "$(dirname "$src")" && pwd -P) || return 1
+    printf '%s/%s\n' "$dir" "$(basename "$src")"
 }
 
-# ── State machine parser for session-metadata.kdl ───────────────────
-# Extracts tab names + pane titles from a single KDL file.
-# Output: pipe-separated lines for display.
-#   tab|<position>|<name>
-#   pane|<tab_index>|<title>
-parse_metadata_file() {
-    local meta_file="${ZELLIJ_SESSION_DIR}/${1}/session-metadata.kdl"
-    [[ -f "$meta_file" ]] || return 1
-
-    local section="" in_tab=0 in_pane=0
-    local tab_pos="" tab_name="" tab_idx=-1
-    local pane_title="" pane_is_plugin="" pane_tab_idx=""
-    local line
-
-    while IFS= read -r line; do
-        line="${line#"${line%%[![:space:]]*}"}"
-        line="${line%"${line##*[![:space:]]}"}"
-        [[ -z "$line" ]] && continue
-
-        if [[ "$line" == "tabs {" ]]; then section="tabs"; continue; fi
-        if [[ "$line" == "panes {" ]]; then section="panes"; continue; fi
-        if [[ "$line" == "}" ]] && [[ "$section" == "tabs" ]] && (( ! in_tab )); then
-            section=""; continue
+# _jolt_find_cache_dir — highest-numbered zellij contract_version_* cache.
+_jolt_find_cache_dir() {
+    local base="${XDG_CACHE_HOME:-$HOME/.cache}/zellij" d n best=-1 best_dir=""
+    for d in "$base"/contract_version_*/session_info; do
+        [[ -d $d ]] || continue
+        n=${d%/session_info}
+        n=${n##*contract_version_}
+        [[ $n =~ ^[0-9]+$ ]] || continue
+        if ((10#$n > best)); then
+            best=$((10#$n))
+            best_dir=$d
         fi
-        if [[ "$line" == "}" ]] && [[ "$section" == "panes" ]] && (( ! in_pane )); then
-            section=""; continue
-        fi
+    done
+    printf '%s\n' "${best_dir:-$base/contract_version_1/session_info}"
+}
 
-        case "$section" in
-            tabs)
-                if [[ "$line" == "tab {" ]]; then
-                    in_tab=1; tab_pos=""; tab_name=""; tab_idx=$((tab_idx+1))
-                elif [[ "$line" == "}" ]]; then
-                    in_tab=0
-                    echo "tab|${tab_pos:-?}|${tab_name:-Tab #$((tab_idx+1))}"
-                elif (( in_tab )); then
-                    if [[ "$line" == name\ \"*\" ]]; then
-                        tab_name="${line#*name \"}"; tab_name="${tab_name%\"}"
-                    elif [[ "$line" == position\ * ]]; then
-                        tab_pos="${line#position }"
-                    fi
-                fi
-                ;;
-            panes)
-                if [[ "$line" == "pane {" ]]; then
-                    in_pane=1; pane_title=""; pane_is_plugin=""; pane_tab_idx=""
-                elif [[ "$line" == "}" ]]; then
-                    in_pane=0
-                    [[ "$pane_is_plugin" == "false" && -n "$pane_title" ]] \
-                        && echo "pane|${pane_tab_idx:-?}|${pane_title}"
-                elif (( in_pane )); then
-                    if [[ "$line" == title\ \"*\" ]]; then
-                        pane_title="${line#*title \"}"; pane_title="${pane_title%\"}"
-                    elif [[ "$line" == is_plugin\ * ]]; then
-                        pane_is_plugin="${line#is_plugin }"
-                    elif [[ "$line" == tab_position\ * ]]; then
-                        pane_tab_idx="${line#tab_position }"
-                    fi
-                fi
-                ;;
+JOLT_SELF=$(_jolt_resolve_self) || JOLT_SELF="${BASH_SOURCE[0]:-$0}"
+: "${JOLT_CACHE_DIR:=$(_jolt_find_cache_dir)}"
+: "${JOLT_ZELLIJ_CONFIG:=${ZELLIJ_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/zellij/config.kdl}}"
+: "${JOLT_CONFIG_FILE:=${XDG_CONFIG_HOME:-$HOME/.config}/zellij-jolt/config}"
+: "${JOLT_STATE_DIR:=${XDG_STATE_HOME:-$HOME/.local/state}/zellij-jolt}"
+JOLT_DRY_RUN="${JOLT_DRY_RUN:-}"
+FZF_VER="${FZF_VER:-}"
+
+warn() {
+    printf 'zellij-jolt: %s\n' "$*" >&2
+}
+
+# fallback_shell — keep the terminal usable when we are its startup command:
+# replace ourselves with a login shell if stdin is a tty, otherwise exit 1.
+# JOLT_NO_FALLBACK=1 (tests, scripts) always exits instead.
+fallback_shell() {
+    local sh="${SHELL:-/bin/sh}"
+    if [[ -z ${JOLT_NO_FALLBACK:-} && -t 0 ]]; then
+        # Never re-exec ourselves if we *are* the configured shell.
+        case "${sh##*/}" in
+            zellij-jolt | zellij-jolt.sh) sh=/bin/sh ;;
         esac
-    done < "$meta_file"
+        exec "$sh" -l
+    fi
+    exit 1
 }
 
-# ── Render helpers — all produce exactly 46 chars between │...│ ──────
-# Inner width = 46 (matches the 46 ─ chars in the border line).
-# Every helper pads/truncates to fill exactly 46 visible chars.
-_box_top()    { printf "${C_BD}  ╭──────────────────────────────────────────────╮${C_RESET}\n"; }
-_box_sep()    { printf "${C_BD}  ├──────────────────────────────────────────────┤${C_RESET}\n"; }
-_box_bot()    { printf "${C_BD}  ╰──────────────────────────────────────────────╯${C_RESET}\n"; }
-_box_title()  { printf "${C_BD}  │${C_RESET} ${C_TL}%-44s${C_RESET} ${C_BD}│${C_RESET}\n" "${1:0:44}"; }
-_box_label()  { printf "${C_BD}  │${C_RESET} ${C_LB}%-7s${C_RESET} ${C_VL}%-36s${C_RESET} ${C_BD}│${C_RESET}\n" "$1" "${2:0:36}"; }
-_box_line()   { printf "${C_BD}  │${C_RESET} %-44s ${C_BD}│${C_RESET}\n" "$1"; }
-_box_tab()    { printf "${C_BD}  │${C_RESET}  ${C_ST}%-3s${C_RESET} ${C_TN}%-39s${C_RESET} ${C_BD}│${C_RESET}\n" "$1" "${2:0:39}"; }
-_box_pane()   { printf "${C_BD}  │${C_RESET}  ${C_PN}     └ %-36s${C_RESET} ${C_BD}│${C_RESET}\n" "${1:0:36}"; }
+die() {
+    warn "$*"
+    fallback_shell
+}
 
-# ── Preview builder (called from fzf --preview) ────────────────────
-session_preview() {
-    local item="$1"
-    case "$item" in
-        "── New Named ──")
-            _box_top
-            _box_title "+ New Named Session"
-            _box_sep
-            _box_line "Prompts for a custom session name via"
-            _box_line "terminal input, then creates a Zellij"
-            _box_line "session with that name."
-            _box_bot
-            return
+# ver_to_int "0.74.5" → 74005 (major*1000000 + minor*1000 + patch).
+# Leading text such as "zellij " and suffixes such as "-rc1" are ignored.
+ver_to_int() {
+    local v="$1"
+    if [[ $v =~ ([0-9]+)(\.([0-9]+))?(\.([0-9]+))? ]]; then
+        echo $((10#${BASH_REMATCH[1]} * 1000000 + 10#${BASH_REMATCH[3]:-0} * 1000 + 10#${BASH_REMATCH[5]:-0}))
+    else
+        echo 0
+    fi
+}
+
+# fzf_detect — set FZF_VER (ver_to_int scale) from `fzf --version`, 0 if absent.
+fzf_detect() {
+    local out
+    out=$(fzf --version 2>/dev/null) || out=""
+    FZF_VER=$(ver_to_int "${out%% *}")
+}
+
+# fzf_has FEATURE — succeeds when the detected fzf supports FEATURE.
+fzf_has() {
+    local need
+    case "$1" in
+        with-shell) need=0.51.0 ;;
+        ghost) need=0.61.0 ;;
+        footer) need=0.63.0 ;;
+        header-border) need=0.72.0 ;;
+        *) return 1 ;;
+    esac
+    [[ -n $FZF_VER ]] || fzf_detect
+    ((FZF_VER >= $(ver_to_int "$need")))
+}
+
+# check_deps — verify bash, fzf and zellij meet the floors. Prints every
+# problem found and returns non-zero if any.
+check_deps() {
+    local rc=0 out have
+    have="${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"
+    if (($(ver_to_int "$have") < $(ver_to_int "$JOLT_MIN_BASH"))); then
+        warn "bash >= $JOLT_MIN_BASH required (found $have; macOS: brew install bash)"
+        rc=1
+    fi
+    if ! command -v fzf >/dev/null 2>&1; then
+        warn "fzf not found (need >= $JOLT_MIN_FZF)"
+        rc=1
+    else
+        fzf_detect
+        if ((FZF_VER < $(ver_to_int "$JOLT_MIN_FZF"))); then
+            warn "fzf >= $JOLT_MIN_FZF required"
+            rc=1
+        fi
+    fi
+    if ! command -v zellij >/dev/null 2>&1; then
+        warn "zellij not found (need >= $JOLT_MIN_ZELLIJ)"
+        rc=1
+    else
+        out=$(zellij --version 2>/dev/null) || out=""
+        if (($(ver_to_int "$out") < $(ver_to_int "$JOLT_MIN_ZELLIJ"))); then
+            warn "zellij >= $JOLT_MIN_ZELLIJ required (found ${out:-unknown})"
+            rc=1
+        fi
+    fi
+    return "$rc"
+}
+
+# ── config ──────────────────────────────────────────────────────────────
+
+# Allowed config keys (without the CFG_ prefix). Anything else is warned
+# about and ignored.
+JOLT_CFG_KEYS=(
+    PROJECT_ROOTS PROJECT_DEPTH DEFAULT_LAYOUT PREVIEW PREVIEW_POS
+    SHOW_EXITED THEME CONFIRM_DELETE
+    KEY_DELETE KEY_PURGE KEY_RENAME KEY_PIN KEY_PROJECT KEY_LAYOUT
+    KEY_PREVIEW KEY_HELP KEY_CREATE
+)
+
+_cfg_defaults() {
+    CFG_PROJECT_ROOTS="$HOME/projects $HOME/code $HOME/src $HOME/dev"
+    CFG_PROJECT_DEPTH=3
+    CFG_DEFAULT_LAYOUT=""
+    CFG_PREVIEW=on
+    CFG_PREVIEW_POS=right
+    CFG_SHOW_EXITED=on
+    CFG_THEME=auto
+    CFG_CONFIRM_DELETE=on
+    CFG_KEY_DELETE=ctrl-d
+    CFG_KEY_PURGE=alt-d
+    CFG_KEY_RENAME=ctrl-r
+    CFG_KEY_PIN=ctrl-t
+    CFG_KEY_PROJECT=ctrl-o
+    CFG_KEY_LAYOUT=ctrl-l
+    CFG_KEY_PREVIEW=ctrl-/
+    CFG_KEY_HELP='?'
+    CFG_KEY_CREATE=alt-enter
+}
+
+# _cfg_expand_tilde VALUE — leading "~" or "~/" → $HOME.
+_cfg_expand_tilde() {
+    local v="$1"
+    if [[ $v == "~" ]]; then
+        v=$HOME
+    elif [[ $v == "~/"* ]]; then
+        v="$HOME/${v#\~/}"
+    fi
+    printf '%s' "$v"
+}
+
+# config_load — read $JOLT_CONFIG_FILE as KEY=VALUE lines into CFG_* vars.
+# Values are literal: never sourced or eval'd; only quotes and ~ handled.
+config_load() {
+    _cfg_defaults
+    local file="$JOLT_CONFIG_FILE" line key val n=0 k ok word out
+    local -a words
+    [[ -f $file && -r $file ]] || return 0
+    while IFS= read -r line || [[ -n $line ]]; do
+        n=$((n + 1))
+        line=${line%$'\r'}
+        # trim surrounding whitespace
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        [[ -z $line || $line == \#* ]] && continue
+        if [[ ! $line =~ ^([A-Z_]+)=(.*)$ ]]; then
+            warn "config line $n: ignored (expected KEY=VALUE)"
+            continue
+        fi
+        key=${BASH_REMATCH[1]}
+        val=${BASH_REMATCH[2]}
+        ok=""
+        for k in "${JOLT_CFG_KEYS[@]}"; do
+            [[ $k == "$key" ]] && ok=1 && break
+        done
+        if [[ -z $ok ]]; then
+            warn "config line $n: unknown key $key"
+            continue
+        fi
+        # strip one pair of matching surrounding quotes
+        if [[ ${#val} -ge 2 && (($val == \"*\" ) || ($val == \'*\')) ]]; then
+            val=${val:1:${#val}-2}
+        fi
+        if [[ $key == PROJECT_ROOTS ]]; then
+            out=""
+            read -r -a words <<<"$val"
+            for word in "${words[@]}"; do
+                out+="${out:+ }$(_cfg_expand_tilde "$word")"
+            done
+            val=$out
+        else
+            val=$(_cfg_expand_tilde "$val")
+        fi
+        printf -v "CFG_$key" '%s' "$val"
+    done <"$file"
+    return 0
+}
+
+# ── theme ───────────────────────────────────────────────────────────────
+
+# (Task: theme_load — zellij theme resolution and fzf color mapping.)
+
+# ── data ────────────────────────────────────────────────────────────────
+
+# (Task: sessions_read, meta_read, layout_cwd, state_*, last_used.)
+
+# ── render ──────────────────────────────────────────────────────────────
+
+# _char_width CODEPOINT — display width of one code point in REPLY
+# (0 combining, 2 East Asian wide / emoji, 1 otherwise).
+_char_width() {
+    local c=$1
+    if ((c >= 0x0300 && c <= 0x036F)); then
+        REPLY=0
+    elif ((c >= 0x1100 && c <= 0x115F)) ||
+        ((c >= 0x2E80 && c <= 0xA4CF)) ||
+        ((c >= 0xAC00 && c <= 0xD7A3)) ||
+        ((c >= 0xF900 && c <= 0xFAFF)) ||
+        ((c >= 0xFE30 && c <= 0xFE4F)) ||
+        ((c >= 0xFF00 && c <= 0xFF60)) ||
+        ((c >= 0xFFE0 && c <= 0xFFE6)) ||
+        ((c >= 0x1F300 && c <= 0x1F64F)) ||
+        ((c >= 0x1F680 && c <= 0x1F6FF)) ||
+        ((c >= 0x1F900 && c <= 0x1F9FF)) ||
+        ((c >= 0x20000 && c <= 0x3FFFD)); then
+        REPLY=2
+    else
+        REPLY=1
+    fi
+}
+
+# dwidth STR — terminal display width of STR.
+dwidth() {
+    local s="$1" i c w=0
+    if [[ $s != *[![:ascii:]]* ]]; then
+        echo "${#s}"
+        return
+    fi
+    for ((i = 0; i < ${#s}; i++)); do
+        printf -v c '%d' "'${s:i:1}"
+        _char_width "$c"
+        w=$((w + REPLY))
+    done
+    echo "$w"
+}
+
+# trunc STR W — STR cut to display width <= W, ending in "…" when cut.
+trunc() {
+    local s="$1" max="$2" i c ch w=0 out=""
+    if (($(dwidth "$s") <= max)); then
+        printf '%s\n' "$s"
+        return
+    fi
+    if ((max <= 0)); then
+        echo ""
+        return
+    fi
+    for ((i = 0; i < ${#s}; i++)); do
+        ch=${s:i:1}
+        printf -v c '%d' "'$ch"
+        _char_width "$c"
+        ((w + REPLY > max - 1)) && break
+        w=$((w + REPLY))
+        out+=$ch
+    done
+    printf '%s…\n' "$out"
+}
+
+# pad STR W — trunc STR to W and right-pad with spaces to exactly W columns.
+pad() {
+    local s w
+    s=$(trunc "$1" "$2")
+    w=$(dwidth "$s")
+    printf '%s%*s\n' "$s" $(($2 > w ? $2 - w : 0)) ""
+}
+
+# ── actions ─────────────────────────────────────────────────────────────
+
+# _bytelen STR — byte length (not character length) of STR.
+_bytelen() {
+    local LC_ALL=C
+    echo "${#1}"
+}
+
+# sanitize_name STR — session-safe name: control chars dropped, "/" → "-",
+# whitespace runs → "-", trimmed, capped at 48 bytes (zellij socket path
+# limit) on a character boundary. Returns 1 when nothing is left.
+sanitize_name() {
+    local s="$1" out="" p
+    local -a parts
+    # tabs/newlines become separators; other control chars vanish
+    s=${s//[$'\t\n\r']/ }
+    s=${s//[[:cntrl:]]/}
+    s=${s//\//-}
+    read -r -a parts <<<"$s"
+    for p in "${parts[@]}"; do
+        out+="${out:+-}$p"
+    done
+    while (($(_bytelen "$out") > 48)); do
+        out=${out%?}
+    done
+    [[ -n $out ]] || return 1
+    printf '%s\n' "$out"
+}
+
+# (Task: go, act_delete, act_purge, act_rename, act_pin, pick_project,
+#  pick_layout.)
+
+# ── picker ──────────────────────────────────────────────────────────────
+
+# (Task: picker_main.)
+
+# ── main ────────────────────────────────────────────────────────────────
+
+usage() {
+    cat <<EOF
+zellij-jolt $JOLT_VERSION — jolt into your Zellij sessions
+
+Usage:
+  zellij-jolt                         picker (default)
+  zellij-jolt --list                  print picker rows (used by fzf reload)
+  zellij-jolt --preview KEY           render preview for a row key
+  zellij-jolt --action ACT KEY        keybind handler: delete|rename|pin|purge
+  zellij-jolt --dry-run               print final zellij command instead of exec
+  zellij-jolt --init-shell SHELL      print guarded auto-start snippet (bash|zsh|fish)
+  zellij-jolt --doctor                environment diagnostics
+  zellij-jolt --version | --help
+
+Config: $JOLT_CONFIG_FILE
+EOF
+}
+
+# init_shell SHELL — print a guarded auto-start snippet for SHELL.
+init_shell() {
+    case "$1" in
+        zsh)
+            cat <<'EOF'
+# zellij-jolt auto-start (set JOLT_SKIP=1 to bypass)
+[[ -z $ZELLIJ && -z $TMUX && -t 0 && -o interactive && $TERM != dumb && $TERM_PROGRAM != vscode && -z $JOLT_SKIP ]] && exec zellij-jolt
+EOF
             ;;
-        "── New Untracked ──")
-            _box_top
-            _box_title "+ New Untracked Session"
-            _box_sep
-            _box_line "Creates an auto-named Zellij session."
-            _box_line "Zellij generates a random adjective-"
-            _box_line "animal name like 'funky-sloth'."
-            _box_bot
-            return
+        bash)
+            cat <<'EOF'
+# zellij-jolt auto-start (set JOLT_SKIP=1 to bypass)
+[[ -z $ZELLIJ && -z $TMUX && -t 0 && $- == *i* && $TERM != dumb && $TERM_PROGRAM != vscode && -z $JOLT_SKIP ]] && exec zellij-jolt
+EOF
             ;;
-        "── Resume ──")
-            _box_top
-            _box_title "→ Resume Session"
-            _box_sep
-            _box_line "Lists all sessions with their age and"
-            _box_line "tab count. Select one to attach."
-            _box_bot
-            return
+        fish)
+            cat <<'EOF'
+# zellij-jolt auto-start (set JOLT_SKIP=1 to bypass)
+if status is-interactive; and not set -q ZELLIJ; and not set -q TMUX; and test -t 0; and test "$TERM" != dumb; and test "$TERM_PROGRAM" != vscode; and not set -q JOLT_SKIP
+    exec zellij-jolt
+end
+EOF
             ;;
-        "── Exit ──"|"── Cancel ──")
-            _box_top
-            _box_title "Exit"
-            _box_sep
-            _box_line "Closes the picker and exits."
-            _box_bot
-            return
+        *)
+            return 2
             ;;
     esac
-
-    # Real session
-    local session_info
-    [[ -z "$item" ]] && { printf "${C_HL}  (session not found)${C_RESET}\n"; return; }
-    session_info=$(zellij list-sessions -n 2>/dev/null \
-        | awk -v item="$item" 'index($0, item " [Created") == 1 || index($0, item " (") == 1 {print; exit}' \
-        || true)
-    if [[ -z "$session_info" ]]; then
-        printf "${C_HL}  (session not found)${C_RESET}\n"
-        return
-    fi
-
-    local age="${session_info#*[Created }"
-    age="${age%%]*}"
-    local status="ACTIVE"
-    [[ "$session_info" == *"(EXITED"* ]] && status="EXITED (resurrect)"
-
-    local meta_output
-    meta_output=$(parse_metadata_file "$item" 2>/dev/null || echo "NOCACHE")
-
-    if [[ "$meta_output" == "NOCACHE" ]]; then
-        _box_top
-        _box_title "$item"
-        _box_sep
-        _box_label "Age:"    "$age"
-        _box_label "Status:" "$status"
-        _box_label "Tabs:"   "(no cached data)"
-        _box_bot
-        return
-    fi
-
-    local tabs=() panes_by_tab=() pos_to_idx=()
-    while IFS='|' read -r kind a b; do
-        if [[ "$kind" == "tab" ]]; then
-            local new_idx="${#tabs[@]}"
-            pos_to_idx[$a]="$new_idx"
-            tabs+=("$a|$b")
-        elif [[ "$kind" == "pane" ]]; then
-            local mapped_idx="${pos_to_idx[$a]:-0}"
-            panes_by_tab[$mapped_idx]+="${b}, "
-        fi
-    done <<< "$meta_output"
-
-    local tab_count="${#tabs[@]}"
-
-    _box_top
-    _box_title "$item"
-    _box_sep
-    _box_label "Age:"    "$age"
-    _box_label "Status:" "$status"
-    _box_label "Tabs:"   "$tab_count"
-    _box_sep
-
-    if (( tab_count == 0 )); then
-        _box_line "  No tabs yet"
-    else
-        local idx=0
-        for tab_entry in "${tabs[@]}"; do
-            local pos="${tab_entry%%|*}"
-            local name="${tab_entry#*|}"
-            local pane_info="${panes_by_tab[$idx]:-}"
-            pane_info="${pane_info%, }"
-            if [[ -n "$pane_info" ]]; then
-                pane_info="${pane_info:0:30}"
-                _box_tab "${pos}." "${name}"
-                _box_pane "${pane_info}"
-            else
-                _box_tab "${pos}." "${name}"
-            fi
-            idx=$((idx+1))
-        done
-    fi
-
-    _box_bot
 }
 
-# ── Helpers ──────────────────────────────────────────────────────────
-_strip_ansi() { printf '%s' "$1" | sed $'s/\e\\[[0-9;]*m//g'; }
-_extract_name() {
-    local line="$1"
-    # Strip trailing " [Created ...]" or " (...)" suffix
-    line="${line%% [*}"
-    printf '%s' "${line%% (*}"
+# _usage_error MSG — message + usage on stderr, exit 2.
+_usage_error() {
+    warn "$1"
+    usage >&2
+    exit 2
 }
 
-# ── Main ────────────────────────────────────────────────────────────
 main() {
-    _load_theme
-    for cmd in zellij fzf; do
-        command -v "$cmd" &>/dev/null || { echo "Error: $cmd required"; exit 1; }
-    done
-
-    local fzf_input="${C_ITA}── New Named ──${C_RESET}"$'\n'"${C_ITA}── New Untracked ──${C_RESET}"$'\n'"${C_ITA}── Resume ──${C_RESET}"$'\n'"${C_ITA}── Exit ──${C_RESET}"
-
-    exec < /dev/tty
-
-    while true; do
-        local selected
-        selected=$(
-            echo "$fzf_input" \
-            | fzf --ansi \
-                  --layout=reverse \
-                  --info=inline \
-                  --border=sharp \
-                  --border-label=' Zellij-Jolt ' \
-                  --border-label-pos=3 \
-                  --header=' Ctrl-n:New  Ctrl-N:Named  Ctrl-r:Resume  Esc:Exit' \
-                  --header-first \
-                  --header-border=sharp \
-                  --color="${FZF_COLORS}" \
-                  --prompt='🔍 ' \
-                  --bind='ctrl-n:become(echo "── New Untracked ──")' \
-                  --bind='ctrl-N:become(echo "── New Named ──")' \
-                  --bind='ctrl-r:become(echo "── Resume ──")' \
-                  --preview="
-                        $(for _v in C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN C_HL C_ITA; do printf '%s=%q; ' "$_v" "${!_v}"; done)
-                        item={};
-                        $(declare -f session_preview parse_metadata_file \
-                                    _box_top _box_sep _box_bot _box_title \
-                                    _box_label _box_line _box_tab _box_pane);
-                        session_preview \"\$item\"
-                    " \
-                  --preview-window='right:60%:border-sharp' \
-                  --preview-label=' Session Details ' \
-                  --preview-label-pos=3
-        )
-
-        selected=$(_strip_ansi "$selected")
-        case "$selected" in
-            "── New Named ──")
-                echo -n "Session name: "
-                read -r session_name
-                [[ -z "$session_name" ]] && { echo "Cancelled."; continue; }
-                exec zellij -s "$session_name"
-                ;;
-            "── New Untracked ──")
-                exec zellij
-                ;;
-            "── Resume ──")
-                # Build a detailed session list and run a sub-picker
-                local resume_list
-                resume_list=$(zellij list-sessions -n 2>/dev/null || true)
-                if [[ -z "$resume_list" ]]; then
-                    printf "${C_HL}  No sessions to resume.${C_RESET}\n"
-                    continue
-                fi
-                local chosen
-                chosen=$(
-                    echo "$resume_list" | fzf --ansi \
-                        --layout=reverse --info=inline \
-                        --border=sharp \
-                        --border-label=' Resume Session ' \
-                        --border-label-pos=3 \
-                        --color="${FZF_COLORS}" \
-                        --prompt='🔍 ' \
-                        --preview="
-                            $(for _v in C_RESET C_BOLD C_BD C_TL C_LB C_VL C_ST C_TN C_PN C_HL C_ITA; do printf '%s=%q; ' "$_v" "${!_v}"; done)
-                            item=\$(_extract_name '{}');
-                            $(declare -f session_preview parse_metadata_file \
-                                        _box_top _box_sep _box_bot _box_title \
-                                        _box_label _box_line _box_tab _box_pane \
-                                        _extract_name);
-                            session_preview \"\$item\"
-                        " \
-                        --preview-window='right:60%:border-sharp' \
-                        --preview-label=' Session Details ' \
-                        --preview-label-pos=3
-                )
-                if [[ -n "$chosen" ]]; then
-                    local sname
-                    sname=$(_extract_name "$chosen")
-                    exec zellij attach "$sname"
-                fi
-                # Esc / no selection → back to main picker
-                continue
-                ;;
-            "── Exit ──"|"── Cancel ──"|"")
-                exit 0
-                ;;
-            *)
-                if zellij list-sessions -s 2>/dev/null | grep -qxF "$selected"; then
-                    exec zellij attach "$selected"
-                else
-                    exec zellij attach "$selected" 2>/dev/null || exec zellij -s "$selected"
-                fi
-                ;;
-        esac
-        break
-    done
+    case "${1:-}" in
+        "")
+            check_deps || die "missing or outdated dependencies"
+            die "not implemented"
+            ;;
+        --version | -V)
+            echo "zellij-jolt $JOLT_VERSION"
+            ;;
+        --help | -h)
+            usage
+            ;;
+        --list)
+            die "not implemented"
+            ;;
+        --preview)
+            (($# >= 2)) || _usage_error "--preview needs a KEY"
+            die "not implemented"
+            ;;
+        --action)
+            (($# >= 3)) || _usage_error "--action needs ACT and KEY"
+            die "not implemented"
+            ;;
+        --dry-run)
+            JOLT_DRY_RUN=1
+            check_deps || die "missing or outdated dependencies"
+            die "not implemented"
+            ;;
+        --init-shell)
+            (($# >= 2)) || _usage_error "--init-shell needs a SHELL (bash|zsh|fish)"
+            init_shell "$2" || _usage_error "unsupported shell: $2 (bash|zsh|fish)"
+            ;;
+        --doctor)
+            die "not implemented"
+            ;;
+        *)
+            _usage_error "unknown option: $1"
+            ;;
+    esac
 }
 
-main "$@"
+[[ ${JOLT_NO_MAIN:-} == 1 ]] || main "$@"
