@@ -27,7 +27,7 @@ setup() {
 }
 
 @test "not-yet-built flag dies without exec'ing a shell" {
-  JOLT_NO_FALLBACK=1 run "$REPO/zellij-jolt.sh" --doctor
+  JOLT_NO_FALLBACK=1 run "$REPO/zellij-jolt.sh" --dry-run
   assert_failure 1
   assert_output --partial "not implemented"
 }
