@@ -255,6 +255,11 @@ _cfg_defaults() {
 # only plain fzf key names (ctrl-d, alt-enter, ctrl-/, ?, f1…) are allowed;
 # anything else (",", ":", "+", parentheses, spaces…) is warned about and
 # replaced by the default.
+#
+# Then clashes: a key that is reserved (navigation/accept/abort) or bound
+# to two actions. An overridden key that clashes falls back to its
+# default; a clash that remains (the default itself is taken) is warned
+# about only.
 _cfg_keys_check() {
     local kv var
     for kv in "${JOLT_KEY_DEFAULTS[@]}"; do
@@ -263,6 +268,47 @@ _cfg_keys_check() {
         warn "config: invalid key name for KEY_${kv%%=*}: ${!var} (using ${kv#*=})"
         printf -v "$var" '%s' "${kv#*=}"
     done
+    for kv in "${JOLT_KEY_DEFAULTS[@]}"; do
+        var="CFG_KEY_${kv%%=*}"
+        [[ ${!var} == "${kv#*=}" ]] && continue
+        _key_clash "${kv%%=*}" all || continue
+        warn "config: KEY_${kv%%=*}=${!var} $REPLY (using ${kv#*=})"
+        printf -v "$var" '%s' "${kv#*=}"
+    done
+    for kv in "${JOLT_KEY_DEFAULTS[@]}"; do
+        var="CFG_KEY_${kv%%=*}"
+        _key_clash "${kv%%=*}" before || continue
+        warn "config: KEY_${kv%%=*}=${!var} $REPLY"
+    done
+}
+
+# Keys fzf needs for navigation, accept and abort.
+JOLT_KEYS_RESERVED=(esc enter ctrl-j ctrl-k ctrl-n ctrl-p ctrl-c)
+
+# _key_clash NAME all|before — succeeds when CFG_KEY_NAME is reserved or
+# equals another action's key (all others, or only those listed before
+# NAME in JOLT_KEY_DEFAULTS); the reason goes in REPLY.
+_key_clash() {
+    local name=$1 mode=$2 var="CFG_KEY_$1" kv other r
+    for r in "${JOLT_KEYS_RESERVED[@]}"; do
+        if [[ ${!var} == "$r" ]]; then
+            REPLY="is reserved"
+            return 0
+        fi
+    done
+    for kv in "${JOLT_KEY_DEFAULTS[@]}"; do
+        other=${kv%%=*}
+        if [[ $other == "$name" ]]; then
+            [[ $mode == before ]] && break
+            continue
+        fi
+        r="CFG_KEY_$other"
+        if [[ ${!r} == "${!var}" ]]; then
+            REPLY="is also bound to KEY_$other"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # _cfg_expand_tilde VALUE — leading "~" or "~/" → $HOME.
@@ -445,7 +491,7 @@ _th_color() {
 }
 
 # _th_stmt — interpret one finished KDL node (_th_toks) at the current
-# block path (_th_stack). Top level: theme / theme_dir. Inside
+# block path (_th_stack). Top level: theme / theme_dir / layout_dir. Inside
 # themes { NAME { … } }: legacy palette keys (depth 2) or component
 # blocks (depth 3), stored as _th_pal["NAME<US>ROLE"]="R G B".
 _th_stmt() {
@@ -453,13 +499,13 @@ _th_stmt() {
     ((${#_th_toks[@]})) || return 0
     [[ $key == /-* ]] && return 0
     if ((d == 0)); then
-        if [[ ($key == theme || $key == theme_dir) && ${#_th_toks[@]} -ge 2 ]]; then
+        if [[ ($key == theme || $key == theme_dir || $key == layout_dir) && ${#_th_toks[@]} -ge 2 ]]; then
             _kdl_str "${_th_toks[*]:1}"
-            if [[ $key == theme ]]; then
-                _th_cfg_name=$REPLY
-            else
-                _th_cfg_dir=$REPLY
-            fi
+            case $key in
+                theme) _th_cfg_name=$REPLY ;;
+                theme_dir) _th_cfg_dir=$REPLY ;;
+                *) _th_cfg_ldir=$REPLY ;;
+            esac
         fi
         return 0
     fi
@@ -585,7 +631,7 @@ theme_load() {
     local mode=${CFG_THEME:-auto} name dir f src="" fmt us=$'\x1f' noglob=0
     local fg bg accent green yellow cyan fgd bgp muted
     local -A _th_pal=() _th_fmt=()
-    local _th_cfg_name="" _th_cfg_dir="" _th_inblock=0
+    local _th_cfg_name="" _th_cfg_dir="" _th_cfg_ldir="" _th_inblock=0
 
     C_RESET="" C_DIM="" C_BOLD="" C_ITA=""
     C_ACCENT="" C_OK="" C_WARN="" C_MUTED="" C_TITLE=""
@@ -1525,7 +1571,7 @@ preview_render() {
         a:help)
             _pv_edge ╭ ╮ "keys"
             _pv_key enter "open session / create from query"
-            _pv_key "${CFG_KEY_CREATE:-alt-enter}" "create from the query"
+            _pv_key "${CFG_KEY_CREATE:-alt-enter}" "create from the query, even when it matches a row"
             _pv_key "${CFG_KEY_DELETE:-ctrl-d}" "kill / delete session"
             _pv_key "${CFG_KEY_PURGE:-alt-d}" "delete all exited sessions"
             _pv_key "${CFG_KEY_RENAME:-ctrl-r}" "rename session"
@@ -1762,7 +1808,11 @@ act_purge() {
         JOLT_SAID=1
         return 0
     fi
-    confirm "Delete ${#exited[@]} exited sessions?" || return 0
+    if ((${#exited[@]} == 1)); then
+        confirm "Delete 1 exited session?" || return 0
+    else
+        confirm "Delete ${#exited[@]} exited sessions?" || return 0
+    fi
     for line in "${exited[@]}"; do
         zellij delete-session -f -- "$line" >/dev/null 2>&1
         rc=$?
@@ -1922,12 +1972,17 @@ _name_prompt() {
         [[ -r $tty ]] || return 1
         # readline swallows ctrl-c inside `read -e`, so read in a subshell
         # that exits on SIGINT while we ignore it; readline draws on
-        # stderr and only the answer comes back on stdout.
+        # stderr and only the answer comes back on stdout. A lone Esc is
+        # bound to a macro that accepts the line as a single ^X sentinel
+        # (escape sequences such as arrows still work via readline's
+        # keyseq timeout), which the subshell turns into a cancel.
         trap ':' INT
         # shellcheck disable=SC2034  # a is used inside the subshell
         ans=$(
             trap 'exit 130' INT
-            IFS= read -r -e -i "$def" -p "Session name: " a <"$tty" >&2 || exit $?
+            bind '"\e": "\C-a\C-k\C-v\C-x\C-m"' 2>/dev/null
+            IFS= read -r -e -i "$def" -p "Session name (esc cancels): " a <"$tty" >&2 || exit $?
+            [[ $a == *$'\x18'* ]] && exit 131
             printf '%s' "$a"
         )
         rc=$?
@@ -2102,12 +2157,36 @@ pick_project() {
     return 1
 }
 
-# layout_candidates — layout names: the user's layouts (*.kdl next to the
-# zellij config, swap layouts excluded) then the built-ins, deduped.
+# zellij_layout_dir — `layout_dir "…"` from $JOLT_ZELLIJ_CONFIG in REPLY
+# ("~" expanded, relative paths resolved against the config's directory);
+# empty when the config sets none.
+zellij_layout_dir() {
+    local _th_cfg_name="" _th_cfg_dir="" _th_cfg_ldir="" _th_inblock=0 noglob=0 d
+    local -A _th_pal=() _th_fmt=()
+    [[ $- == *f* ]] && noglob=1
+    set -f
+    _th_scan "${JOLT_ZELLIJ_CONFIG:-}"
+    ((noglob)) || set +f
+    d=$_th_cfg_ldir
+    if [[ $d == "~" ]]; then
+        d=$HOME
+    elif [[ $d == "~/"* ]]; then
+        d="$HOME/${d#\~/}"
+    elif [[ -n $d && $d != /* ]]; then
+        d="${JOLT_ZELLIJ_CONFIG%/*}/$d"
+    fi
+    REPLY=$d
+}
+
+# layout_candidates — layout names: the user's layouts (*.kdl in the
+# config's layout_dir and in layouts/ next to the zellij config, swap
+# layouts excluded) then the built-ins, deduped.
 layout_candidates() {
-    local f n out=""
+    local f n out="" ldir
     local -A seen=()
-    for f in "${JOLT_ZELLIJ_CONFIG%/*}"/layouts/*.kdl default compact classic strider; do
+    zellij_layout_dir
+    ldir=$REPLY
+    for f in ${ldir:+"$ldir"/*.kdl} "${JOLT_ZELLIJ_CONFIG%/*}"/layouts/*.kdl default compact classic strider; do
         if [[ $f == */* ]]; then
             [[ -f $f ]] || continue
             n=${f##*/}
@@ -2311,7 +2390,8 @@ Usage:
 
 Keys (change with KEY_* in the config; defaults shown):
   enter        open the selected session / create the typed name
-  alt-enter    create a session named after the query      KEY_CREATE
+  alt-enter    create a session named after the query,     KEY_CREATE
+               even when it matches a session or action row
   ctrl-d       kill / delete the selected session          KEY_DELETE
   alt-d        delete all exited sessions                  KEY_PURGE
   ctrl-r       rename the selected session                 KEY_RENAME

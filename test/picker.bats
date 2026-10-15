@@ -172,6 +172,38 @@ fzf_args() {
   assert_line "--expect=alt-enter,ctrl-o,ctrl-l"
 }
 
+@test "an overridden key that is reserved or taken falls back to its default" {
+  cfg 'KEY_PIN=ctrl-o' 'KEY_RENAME=ctrl-j' 'KEY_PURGE=alt-p'
+  jolt_source
+  run config_load
+  assert_output --partial "KEY_PIN=ctrl-o is also bound to KEY_PROJECT (using ctrl-t)"
+  assert_output --partial "KEY_RENAME=ctrl-j is reserved (using ctrl-r)"
+  config_load 2>/dev/null
+  [ "$CFG_KEY_PIN" = ctrl-t ]
+  [ "$CFG_KEY_RENAME" = ctrl-r ]
+  [ "$CFG_KEY_PURGE" = alt-p ]
+  [ "$CFG_KEY_PROJECT" = ctrl-o ]
+}
+
+@test "a clash with a default key that cannot be resolved is only warned about" {
+  # PURGE falls back to alt-d, which DELETE (checked earlier) now holds.
+  cfg 'KEY_DELETE=alt-d' 'KEY_PURGE=ctrl-r'
+  jolt_source
+  run config_load
+  assert_output --partial "KEY_PURGE=ctrl-r is also bound to KEY_RENAME (using alt-d)"
+  assert_output --partial "KEY_PURGE=alt-d is also bound to KEY_DELETE"
+  config_load 2>/dev/null
+  [ "$CFG_KEY_DELETE" = alt-d ]
+  [ "$CFG_KEY_PURGE" = alt-d ]
+}
+
+@test "default keys raise no warnings" {
+  jolt_source
+  run config_load
+  assert_success
+  assert_output ""
+}
+
 @test "help preview lists every key" {
   run "$REPO/zellij-jolt.sh" --preview a:help
   assert_success
@@ -276,6 +308,27 @@ mkproj() {
   jolt_source
   run layout_candidates
   assert_output $'compact\ndev\ndefault\nclassic\nstrider'
+}
+
+@test "layout_candidates includes layout_dir from the zellij config" {
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$BATS_TEST_TMPDIR/rel/lay" "$HOME/lay" "$BATS_TEST_TMPDIR/layouts"
+  touch "$BATS_TEST_TMPDIR/rel/lay/mine.kdl" "$BATS_TEST_TMPDIR/rel/lay/compact.kdl" \
+    "$BATS_TEST_TMPDIR/layouts/mine.kdl" "$BATS_TEST_TMPDIR/layouts/other.kdl" "$HOME/lay/tilde.kdl"
+  jolt_source
+  # relative to the config file's directory, deduped with layouts/ and built-ins
+  printf 'theme "x"\nlayout_dir "rel/lay"\n' >"$JOLT_ZELLIJ_CONFIG"
+  run layout_candidates
+  assert_output $'compact\nmine\nother\ndefault\nclassic\nstrider'
+  # ~ expansion
+  printf 'layout_dir "~/lay"\n' >"$JOLT_ZELLIJ_CONFIG"
+  run layout_candidates
+  assert_output $'tilde\nmine\nother\ndefault\ncompact\nclassic\nstrider'
+  # absolute
+  printf 'layout_dir "%s/rel/lay"\n' "$BATS_TEST_TMPDIR" >"$JOLT_ZELLIJ_CONFIG"
+  run layout_candidates
+  assert_line --index 0 compact
+  assert_line --index 1 mine
 }
 
 @test "ctrl-l picks a layout then prompts for the name" {

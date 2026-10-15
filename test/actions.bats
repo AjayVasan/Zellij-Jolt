@@ -264,6 +264,16 @@ stub_count() {
   [ "$(stub_count kill-session)" -eq 0 ]
 }
 
+@test "purge prompt: singular and plural" {
+  printf 'n\n' >"$JOLT_TTY"
+  run act_purge
+  assert_output --partial "Delete 1 exited session?"
+  printf '%s\n' 'a [Created 1s ago] (EXITED - attach to resurrect)' 'b [Created 1s ago] (EXITED - attach to resurrect)' >"$BATS_TEST_TMPDIR/ls.txt"
+  export STUB_LS="$BATS_TEST_TMPDIR/ls.txt"
+  run act_purge
+  assert_output --partial "Delete 2 exited sessions?"
+}
+
 @test "purge declined does nothing" {
   printf 'n\n' >"$JOLT_TTY"
   run act_purge

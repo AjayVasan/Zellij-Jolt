@@ -171,10 +171,10 @@ setup() {
 
 @test "config value with command substitution is kept literally" {
   mkdir -p "$XDG_CONFIG_HOME/zellij-jolt"
-  printf '# comment\n\nTHEME='"'"'$(touch %s/pwned)'"'"'\nKEY_PIN=ctrl-p\n' "$BATS_TEST_TMPDIR" >"$XDG_CONFIG_HOME/zellij-jolt/config"
+  printf '# comment\n\nTHEME='"'"'$(touch %s/pwned)'"'"'\nKEY_PIN=alt-p\n' "$BATS_TEST_TMPDIR" >"$XDG_CONFIG_HOME/zellij-jolt/config"
   config_load 2>/dev/null
   [ "$CFG_THEME" = "\$(touch $BATS_TEST_TMPDIR/pwned)" ]
-  [ "$CFG_KEY_PIN" = ctrl-p ]
+  [ "$CFG_KEY_PIN" = alt-p ]
   [ ! -e "$BATS_TEST_TMPDIR/pwned" ]
 }
 
