@@ -91,7 +91,7 @@ _jolt_locale_init() {
     JOLT_UTF8=1
     _jolt_is_utf8 "$cur" && return 0
     mapfile -t avail < <(locale -a 2>/dev/null)
-    for l in "${avail[@]}"; do
+    for l in ${avail[@]+"${avail[@]}"}; do
         _jolt_is_utf8 "$l" || continue
         case "$l" in
             C.[Uu][Tt][Ff]*)
@@ -357,7 +357,7 @@ config_load() {
         if [[ $key == PROJECT_ROOTS ]]; then
             out=""
             read -r -a words <<<"$val"
-            for word in "${words[@]}"; do
+            for word in ${words[@]+"${words[@]}"}; do
                 out+="${out:+ }$(_cfg_expand_tilde "$word")"
             done
             val=$out
@@ -549,7 +549,7 @@ _th_scan() {
         [[ $REPLY == *[![:space:]]* ]] || continue
         # shellcheck disable=SC2206  # word split; globbing is off (set -f)
         words=($REPLY)
-        for tok in "${words[@]}"; do
+        for tok in ${words[@]+"${words[@]}"}; do
             # skip>0: nesting depth inside an ignored block — a /- slashdash
             # block or any top-level block other than themes (keybinds…)
             if ((skip)); then
@@ -1613,7 +1613,7 @@ sanitize_name() {
     s=${s//[[:cntrl:]]/}
     s=${s//\//-}
     read -r -a parts <<<"$s"
-    for p in "${parts[@]}"; do
+    for p in ${parts[@]+"${parts[@]}"}; do
         out+="${out:+-}$p"
     done
     while [[ $out == -* ]]; do out=${out#-}; done

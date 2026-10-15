@@ -169,6 +169,24 @@ setup() {
   assert_output --partial "EVIL"
 }
 
+@test "config PROJECT_ROOTS= (empty or blank) loads under set -u with no roots" {
+  # bash 4.2/4.3 treat "${a[@]}" of an empty array as unbound under set -u;
+  # an empty PROJECT_ROOTS value must not kill startup there.
+  mkdir -p "$XDG_CONFIG_HOME/zellij-jolt"
+  local v
+  for v in '' '   '; do
+    printf 'PROJECT_ROOTS=%s\n' "$v" >"$XDG_CONFIG_HOME/zellij-jolt/config"
+    run bash -c 'set -u; JOLT_NO_MAIN=1 source "$REPO/zellij-jolt.sh"; config_load; echo "rc=$? [$CFG_PROJECT_ROOTS]"'
+    assert_success
+    assert_line "rc=0 []"
+  done
+}
+
+@test "sanitize_name of a blank string fails cleanly under set -u" {
+  run bash -c 'set -u; JOLT_NO_MAIN=1 source "$REPO/zellij-jolt.sh"; sanitize_name "   "; echo "rc=$?"'
+  assert_output "rc=1"
+}
+
 @test "config value with command substitution is kept literally" {
   mkdir -p "$XDG_CONFIG_HOME/zellij-jolt"
   printf '# comment\n\nTHEME='"'"'$(touch %s/pwned)'"'"'\nKEY_PIN=alt-p\n' "$BATS_TEST_TMPDIR" >"$XDG_CONFIG_HOME/zellij-jolt/config"

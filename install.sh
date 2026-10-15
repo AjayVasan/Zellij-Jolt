@@ -136,7 +136,7 @@ gsettings_next_custom_path() {
     while true; do
         local candidate="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom${n}/"
         local taken=0 p
-        for p in "${existing[@]}"; do
+        for p in ${existing[@]+"${existing[@]}"}; do
             if [[ "$p" == "$candidate" ]]; then
                 taken=1
                 break
@@ -163,7 +163,7 @@ gsettings_register_shortcut() {
     existing+=("$path")
 
     local joined="" p
-    for p in "${existing[@]}"; do
+    for p in ${existing[@]+"${existing[@]}"}; do
         if [[ -z "$joined" ]]; then
             joined="'$p'"
         else
