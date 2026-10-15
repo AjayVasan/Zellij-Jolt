@@ -1253,9 +1253,11 @@ go() {
             return 0
         fi
         state_touch "$name" || true
-        argv=(zellij action switch-session "$name")
+        # Options first, then `--` so a name starting with "-" stays a name.
+        argv=(zellij action switch-session)
         [[ -n $cwd ]] && argv+=(--cwd "$cwd")
         [[ -n $new && -n $layout ]] && argv+=(--layout "$layout")
+        argv+=(-- "$name")
         run_or_exec "${argv[@]}"
         return
     fi
@@ -1309,7 +1311,7 @@ act_delete() {
             ;;
         active)
             confirm "Kill and delete $name?" || return 0
-            zellij kill-session "$name" >/dev/null 2>&1
+            zellij kill-session -- "$name" >/dev/null 2>&1
             rc=$?
             if ((rc != 0 && rc != 1)); then
                 warn "kill-session $name failed (rc $rc)"
@@ -1320,7 +1322,7 @@ act_delete() {
             confirm "Delete $name?" || return 0
             ;;
     esac
-    zellij delete-session -f "$name" >/dev/null 2>&1
+    zellij delete-session -f -- "$name" >/dev/null 2>&1
     rc=$?
     if ((rc != 0 && rc != 2)); then
         warn "delete-session $name failed (rc $rc)"
@@ -1343,7 +1345,7 @@ act_purge() {
     fi
     confirm "Delete ${#exited[@]} exited sessions?" || return 0
     for line in "${exited[@]}"; do
-        zellij delete-session -f "$line" >/dev/null 2>&1
+        zellij delete-session -f -- "$line" >/dev/null 2>&1
         rc=$?
         if ((rc != 0 && rc != 2)); then
             warn "delete-session $line failed (rc $rc)"
@@ -1357,9 +1359,9 @@ act_purge() {
 
 # act_rename KEY — rename running session "s:NAME". The new name comes from
 # $JOLT_RENAME_TO or a terminal prompt (empty answer cancels; unusable names
-# re-prompt) and is sanitized. Exited sessions can't be renamed by zellij.
+# re-prompt, up to 3 tries) and is sanitized. Exited sessions can't be renamed by zellij.
 act_rename() {
-    local old new raw rc
+    local old new raw rc tries=0
     _key_name "${1:-}" || return 0
     old=$REPLY
     if ! _session_status "$old"; then
@@ -1371,6 +1373,10 @@ act_rename() {
         return 1
     fi
     while :; do
+        if ((++tries > 3)); then
+            warn "too many unusable names; rename cancelled"
+            return 1
+        fi
         if [[ -n ${JOLT_RENAME_TO+x} ]]; then
             raw=$JOLT_RENAME_TO
         else
@@ -1390,7 +1396,7 @@ act_rename() {
         warn "a session named $new already exists"
         return 1
     fi
-    zellij --session "$old" action rename-session "$new" >/dev/null 2>&1
+    zellij --session="$old" action rename-session -- "$new" >/dev/null 2>&1
     rc=$?
     if ((rc != 0)); then
         warn "rename-session failed (rc $rc)"

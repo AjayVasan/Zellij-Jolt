@@ -90,14 +90,14 @@ stub_count() {
 @test "go inside zellij switches" {
   ZELLIJ=0 ZELLIJ_SESSION_NAME=obsidian run go appr
   assert_success
-  assert_output "DRY: zellij action switch-session appr"
+  assert_output "DRY: zellij action switch-session -- appr"
 }
 
 @test "go inside zellij passes cwd, and layout only for new sessions" {
   ZELLIJ=0 ZELLIJ_SESSION_NAME=obsidian run go appr /tmp compact
-  assert_output "DRY: zellij action switch-session appr --cwd /tmp"
+  assert_output "DRY: zellij action switch-session --cwd /tmp -- appr"
   ZELLIJ=0 ZELLIJ_SESSION_NAME=obsidian run go fresh /tmp compact
-  assert_output "DRY: zellij action switch-session fresh --cwd /tmp --layout compact"
+  assert_output "DRY: zellij action switch-session --cwd /tmp --layout compact -- fresh"
 }
 
 @test "go to current is noop" {
@@ -163,7 +163,7 @@ stub_count() {
   JOLT_ASSUME_YES=1 run act_delete s:memora_new
   assert_success
   assert_output ""
-  grep -q $'^delete-session\x1f-f\x1fmemora_new\x1f$' "$STUB_LOG"
+  grep -q $'^delete-session\x1f-f\x1f--\x1fmemora_new\x1f$' "$STUB_LOG"
   [ "$(stub_count kill-session)" -eq 0 ]
 }
 
@@ -171,8 +171,8 @@ stub_count() {
   JOLT_ASSUME_YES=1 run act_delete s:appr
   assert_success
   run grep -e kill-session -e delete-session "$STUB_LOG"
-  assert_line --index 0 $'kill-session\x1fappr\x1f'
-  assert_line --index 1 $'delete-session\x1f-f\x1fappr\x1f'
+  assert_line --index 0 $'kill-session\x1f--\x1fappr\x1f'
+  assert_line --index 1 $'delete-session\x1f-f\x1f--\x1fappr\x1f'
 }
 
 @test "delete forgets mru and pin" {
@@ -219,6 +219,37 @@ stub_count() {
   assert_output ""
 }
 
+@test "delete: listed session gone by kill/delete time (kill rc 1, delete rc 2) succeeds" {
+  state_touch appr
+  pins_toggle appr
+  STUB_RC_KILL=1 STUB_RC_DELETE=2 JOLT_ASSUME_YES=1 run act_delete s:appr
+  assert_success
+  [ "$(stub_count kill-session)" -eq 1 ]
+  [ "$(stub_count delete-session)" -eq 1 ]
+  run state_mru appr
+  assert_output ""
+  run pins_has appr
+  assert_failure
+}
+
+@test "delete: other kill/delete failures are reported" {
+  STUB_RC_KILL=3 JOLT_ASSUME_YES=1 run act_delete s:appr
+  assert_failure
+  assert_output --partial "kill-session"
+  [ "$(stub_count delete-session)" -eq 0 ]
+  STUB_RC_DELETE=1 JOLT_ASSUME_YES=1 run act_delete s:memora_new
+  assert_failure
+  assert_output --partial "delete-session"
+}
+
+@test "stub: -- ends options so the next arg is the target" {
+  STUB_RC_DELETE=2 run zellij delete-session -f -- appr
+  assert_failure 2
+  run zellij kill-session -- -nope
+  assert_failure 1
+  assert_output --partial '"-nope"'
+}
+
 @test "delete ignores action rows" {
   JOLT_ASSUME_YES=1 run act_delete a:new
   assert_success
@@ -228,7 +259,7 @@ stub_count() {
 @test "purge deletes only exited" {
   JOLT_ASSUME_YES=1 run act_purge
   assert_success
-  grep -q $'^delete-session\x1f-f\x1fmemora_new\x1f$' "$STUB_LOG"
+  grep -q $'^delete-session\x1f-f\x1f--\x1fmemora_new\x1f$' "$STUB_LOG"
   [ "$(stub_count delete-session)" -eq 1 ]
   [ "$(stub_count kill-session)" -eq 0 ]
 }
@@ -253,7 +284,7 @@ stub_count() {
   JOLT_RENAME_TO="new name" run act_rename s:appr
   assert_success
   assert_output ""
-  grep -q $'^--session\x1fappr\x1faction\x1frename-session\x1fnew-name\x1f$' "$STUB_LOG"
+  grep -q $'^--session=appr\x1faction\x1frename-session\x1f--\x1fnew-name\x1f$' "$STUB_LOG"
 }
 
 @test "rename moves mru and pin" {
@@ -285,11 +316,20 @@ stub_count() {
   [ "$(stub_count rename-session)" -eq 0 ]
 }
 
+@test "rename gives up after 3 unusable answers" {
+  printf '///\n' >"$JOLT_TTY"
+  run act_rename s:appr
+  assert_failure
+  assert_output --partial "too many"
+  [ "$(grep -c "unusable session name" <<<"$output")" -eq 3 ]
+  [ "$(stub_count rename-session)" -eq 0 ]
+}
+
 @test "rename reads the new name from the tty" {
   printf 'from tty\n' >"$JOLT_TTY"
   run act_rename s:appr
   assert_success
-  grep -q $'rename-session\x1ffrom-tty\x1f$' "$STUB_LOG"
+  grep -q $'rename-session\x1f--\x1ffrom-tty\x1f$' "$STUB_LOG"
 }
 
 @test "rename with an empty answer or no tty cancels" {
@@ -322,13 +362,13 @@ stub_count() {
   JOLT_ASSUME_YES=1 run "$REPO/zellij-jolt.sh" --action delete s:memora_new
   assert_success
   assert_output ""
-  grep -q $'^delete-session\x1f-f\x1fmemora_new\x1f$' "$STUB_LOG"
+  grep -q $'^delete-session\x1f-f\x1f--\x1fmemora_new\x1f$' "$STUB_LOG"
 }
 
 @test "--action rename via the CLI" {
   JOLT_RENAME_TO=renamed run "$REPO/zellij-jolt.sh" --action rename s:appr
   assert_success
-  grep -q $'rename-session\x1frenamed\x1f$' "$STUB_LOG"
+  grep -q $'rename-session\x1f--\x1frenamed\x1f$' "$STUB_LOG"
 }
 
 @test "--action purge needs no key" {
