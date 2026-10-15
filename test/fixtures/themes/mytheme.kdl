@@ -1,0 +1,18 @@
+// External theme file fixture (as loaded via `theme_dir` + `theme "mytheme"`).
+// Legacy inline-RGB palette format, same fg/bg as the other config fixtures.
+
+themes {
+    mytheme {
+        fg 244 244 244
+        bg 24 24 24
+        red 244 56 65
+        green 115 217 54
+        yellow 255 221 126
+        blue 150 166 200
+        magenta 158 149 199
+        orange 255 79 90
+        cyan 149 169 159
+        black 0 0 0
+        white 228 228 228
+    }
+}

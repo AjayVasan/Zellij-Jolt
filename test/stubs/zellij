@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Stub `zellij` binary for bats tests.
+#
+# Logs every invocation to $STUB_LOG (one line per call, args separated by
+# \x1f so arguments containing spaces/tabs are unambiguous), then replays
+# canned output from the file named by $STUB_LS for the commands the test
+# suite cares about.
+set -u
+
+{
+  printf '%s\x1f' "$@"
+  printf '\n'
+} >>"${STUB_LOG:-/dev/null}"
+
+cmd="${1:-}"
+shift || true
+
+# True (rc 0) when $STUB_LS is set and points at a non-empty file.
+_stub_ls_present() {
+  [ -n "${STUB_LS:-}" ] && [ -s "$STUB_LS" ]
+}
+
+case "$cmd" in
+list-sessions | ls)
+  mode=""
+  for a in "$@"; do
+    case "$a" in
+    -n) mode="n" ;;
+    -s) mode="s" ;;
+    esac
+  done
+  if ! _stub_ls_present; then
+    echo "No active zellij sessions found." >&2
+    exit 1
+  fi
+  if [ "$mode" = "s" ]; then
+    sed -E 's/ \[Created.*$//' "$STUB_LS"
+  else
+    cat "$STUB_LS"
+  fi
+  exit 0
+  ;;
+--version)
+  echo "zellij 0.45.1"
+  exit 0
+  ;;
+kill-session)
+  target=""
+  for a in "$@"; do
+    case "$a" in
+    -*) ;;
+    *) target="$a" ;;
+    esac
+  done
+  if _stub_ls_present && grep -qF "$target" "$STUB_LS"; then
+    exit 0
+  fi
+  echo "No session named \"$target\" found." >&2
+  exit 1
+  ;;
+delete-session)
+  target=""
+  for a in "$@"; do
+    case "$a" in
+    -*) ;;
+    *) target="$a" ;;
+    esac
+  done
+  if _stub_ls_present && grep -qF "$target" "$STUB_LS"; then
+    exit 0
+  fi
+  echo "No session named \"$target\" found." >&2
+  exit 2
+  ;;
+*)
+  exit 0
+  ;;
+esac

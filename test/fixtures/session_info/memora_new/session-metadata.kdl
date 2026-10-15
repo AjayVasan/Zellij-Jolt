@@ -1,0 +1,400 @@
+name "memora_new"
+tabs {
+    tab {
+        position 0
+        name "Janitor"
+        active true
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        other_focused_clients 2
+        viewport_rows 54
+        viewport_columns 213
+        display_area_columns 213
+        display_area_rows 56
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 0
+    }
+    tab {
+        position 1
+        name "m dash"
+        active true
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        other_focused_clients 1
+        viewport_rows 54
+        viewport_columns 213
+        display_area_columns 213
+        display_area_rows 56
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 1
+    }
+    tab {
+        position 2
+        name "clauder #398"
+        active false
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        viewport_rows 54
+        viewport_columns 213
+        display_area_columns 213
+        display_area_rows 56
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 2
+    }
+    tab {
+        position 3
+        name "CHIP"
+        active false
+        panes_to_hide 0
+        is_fullscreen_active false
+        is_sync_panes_active false
+        are_floating_panes_visible false
+        viewport_rows 54
+        viewport_columns 213
+        display_area_columns 213
+        display_area_rows 56
+        is_swap_layout_dirty false
+        selectable_tiled_panes_count 1
+        selectable_floating_panes_count 0
+        tab_id 3
+    }
+}
+panes {
+    pane {
+        id 0
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "OC | Janitor implementation deep dive"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 1
+        pane_y 1
+        pane_content_y 2
+        pane_rows 54
+        pane_content_rows 52
+        pane_columns 213
+        pane_content_columns 211
+        is_selectable true
+        tab_position 0
+    }
+    pane {
+        id 1
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "tab-bar"
+        is_selectable false
+        tab_position 0
+    }
+    pane {
+        id 2
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 55
+        pane_content_y 55
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "status-bar"
+        is_selectable false
+        tab_position 0
+    }
+    pane {
+        id 0
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed true
+        title "(.) - zellij:link"
+        exited false
+        is_held false
+        pane_x 22
+        pane_content_x 23
+        pane_y 8
+        pane_content_y 9
+        pane_rows 15
+        pane_content_rows 13
+        pane_columns 44
+        pane_content_columns 42
+        plugin_url "zellij:link"
+        is_selectable true
+        tab_position 0
+    }
+    pane {
+        id 1
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "✳ analysis-dashboard-control-plane"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 1
+        pane_y 1
+        pane_content_y 2
+        pane_rows 54
+        pane_content_rows 52
+        pane_columns 213
+        pane_content_columns 211
+        is_selectable true
+        tab_position 1
+    }
+    pane {
+        id 3
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "tab-bar"
+        is_selectable false
+        tab_position 1
+    }
+    pane {
+        id 4
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 55
+        pane_content_y 55
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "status-bar"
+        is_selectable false
+        tab_position 1
+    }
+    pane {
+        id 3
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "✳ code-review-sql-db-safety"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 1
+        pane_y 1
+        pane_content_y 2
+        pane_rows 54
+        pane_content_rows 52
+        pane_columns 213
+        pane_content_columns 211
+        is_selectable true
+        tab_position 3
+    }
+    pane {
+        id 7
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "tab-bar"
+        is_selectable false
+        tab_position 3
+    }
+    pane {
+        id 8
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 55
+        pane_content_y 55
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "status-bar"
+        is_selectable false
+        tab_position 3
+    }
+    pane {
+        id 2
+        is_plugin false
+        is_focused true
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "✳ Analyze issue #398 and propose solutions"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 1
+        pane_y 1
+        pane_content_y 2
+        pane_rows 54
+        pane_content_rows 52
+        pane_columns 213
+        pane_content_columns 211
+        is_selectable true
+        tab_position 2
+    }
+    pane {
+        id 5
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "tab-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 0
+        pane_content_y 0
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "tab-bar"
+        is_selectable false
+        tab_position 2
+    }
+    pane {
+        id 6
+        is_plugin true
+        is_focused false
+        is_fullscreen false
+        is_floating false
+        is_suppressed false
+        title "status-bar"
+        exited false
+        is_held false
+        pane_x 0
+        pane_content_x 0
+        pane_y 55
+        pane_content_y 55
+        pane_rows 1
+        pane_content_rows 1
+        pane_columns 213
+        pane_content_columns 213
+        plugin_url "status-bar"
+        is_selectable false
+        tab_position 2
+    }
+}
+connected_clients 2
+web_clients_allowed false
+web_client_count 0
+available_layouts {
+    default source="built-in"
+    classic source="built-in"
+    compact source="built-in"
+    disable-status-bar source="built-in"
+    strider source="built-in"
+}
+tab_history {
+    client {
+        id 1
+        history 0 3 2
+    }
+    client {
+        id 2
+        history 3 2 1
+    }
+}
+pane_history {
+    client {
+        id 1
+        history {
+            pane_id type="terminal" 5
+            pane_id type="terminal" 4
+            pane_id type="terminal" 0
+            pane_id type="terminal" 3
+            pane_id type="terminal" 2
+            pane_id type="terminal" 1
+        }
+    }
+    client {
+        id 2
+        history {
+            pane_id type="terminal" 3
+            pane_id type="terminal" 2
+            pane_id type="terminal" 1
+            pane_id type="terminal" 0
+        }
+    }
+}
+creation_time 22807
