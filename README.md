@@ -42,7 +42,7 @@ Zellij-Jolt replaces your terminal's shell with an `fzf`-powered picker: fuzzy-f
 
 - `bash` ≥ 4.2 (macOS ships 3.2 — `brew install bash`, no need to change your login shell)
 - `fzf` ≥ 0.38
-- `zellij` ≥ 0.39
+- `zellij` ≥ 0.39 (≥ 0.44 to switch sessions from inside Zellij)
 - Optional: `zoxide` (project picker), `fd` (project picker, faster directory scan)
 
 ## Install
@@ -53,7 +53,7 @@ cd Zellij-Jolt
 ./install.sh
 ```
 
-This copies `zellij-jolt.sh` to `${XDG_DATA_HOME:-~/.local/share}/zellij-jolt/`, symlinks it at `${XDG_BIN_HOME:-~/.local/bin}/zellij-jolt`, checks dependency versions, and prints the config snippet for any terminal emulator it detects (see Setup below). On GNOME it also offers to register a keyboard shortcut (opt-in, skipped entirely under `--yes` or when stdin isn't a terminal).
+This copies `zellij-jolt.sh` to `${XDG_DATA_HOME:-~/.local/share}/zellij-jolt/`, symlinks it at `${XDG_BIN_HOME:-~/.local/bin}/zellij-jolt`, checks dependency versions, and prints the config snippet for any terminal emulator it detects (see Setup below). On GNOME it also offers to register a keyboard shortcut (opt-in, skipped entirely under `--yes` or when stdin isn't a terminal; the shortcut opens zellij-jolt in the first terminal it finds — alacritty, kitty, wezterm, ghostty, foot or gnome-terminal — and is skipped when there is none).
 
 ```
 Usage: install.sh [--yes] [--no-shortcut] [--uninstall] [--help]
@@ -62,6 +62,8 @@ Usage: install.sh [--yes] [--no-shortcut] [--uninstall] [--help]
   --no-shortcut   Skip the GNOME keyboard-shortcut question entirely.
   --uninstall     Remove the installed script and symlink, then exit.
   --help          Show this help.
+
+Stdin that isn't a terminal (e.g. piped input) behaves like --yes.
 ```
 
 `./install.sh --uninstall` removes the symlink and install directory only — it never touches shell rc files, terminal config, or GNOME shortcuts.
@@ -182,15 +184,16 @@ zellij-jolt --dry-run               print final zellij command instead of exec
 zellij-jolt --init-shell SHELL      print guarded auto-start snippet (bash|zsh|fish)
 zellij-jolt --doctor                environment diagnostics
 zellij-jolt --version | --help
+zellij-jolt --preview-dir DIR       (internal) project preview listing
 ```
 
-`--list` and `--preview` are what fzf calls internally (reload and preview callbacks); you won't normally run them by hand. `--dry-run` runs the picker but prints the `zellij`/`exec` command it would have run instead of executing it — useful for checking what a selection will actually do.
+`--preview`, `--list`, `--action` and `--preview-dir` are internal callbacks used by fzf (preview, reload and keybind handlers); you won't normally run them by hand. `--dry-run` runs the picker but prints the `zellij`/`exec` command it would have run instead of executing it — useful for checking what a selection will actually do.
 
 ## Troubleshooting
 
 - **Preview shows errors / garbled output under zsh** — fixed in v2 (the preview callback now re-invokes the script by absolute path instead of relying on `$SHELL`, which broke under zsh in v1).
 - **`bash: command not found` or version errors on macOS** — macOS ships bash 3.2. Install a newer one with `brew install bash`; you don't need to change your login shell, Zellij-Jolt will use it directly.
-- **Running it from inside a Zellij session** — Zellij-Jolt detects `$ZELLIJ` and uses `zellij action switch-session` instead of starting a nested session. Selecting the session you're already in is a no-op.
+- **Running it from inside a Zellij session** — Zellij-Jolt detects `$ZELLIJ` and uses `zellij action switch-session` instead of starting a nested session. Selecting the session you're already in is a no-op. `switch-session` needs zellij ≥ 0.44; on older versions Zellij-Jolt says so — detach first (Ctrl-o d) and run it outside.
 - **Something looks wrong with versions, theme, or paths** — run `zellij-jolt --doctor`:
   ```
   bash 5.3.20 (ok)
