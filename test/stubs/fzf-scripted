@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Scripted stand-in for fzf (picker tests point JOLT_FZF at it).
+#
+#   --version            prints "0.74.5 (stub)"
+#   otherwise            stdin is drained and ignored; argv is appended to
+#                        $FZF_SCRIPT_ARGS (one line per call, args joined
+#                        by \x1f) when set. Output/rc come from:
+#     $FZF_SCRIPT_DIR    sequence mode: call N (1-based, counted in
+#                        $FZF_SCRIPT_DIR/n) prints N.out and exits with
+#                        N.rc (default 0); past the last N.out → rc 130.
+#     else               prints $FZF_SCRIPT_OUT (plus newline when
+#                        non-empty) and exits $FZF_SCRIPT_RC (default 0).
+set -u
+
+if [ "${1:-}" = --version ]; then
+  echo "0.74.5 (stub)"
+  exit 0
+fi
+
+cat >/dev/null
+
+if [ -n "${FZF_SCRIPT_ARGS:-}" ]; then
+  {
+    printf '%s\x1f' "$@"
+    printf '\n'
+  } >>"$FZF_SCRIPT_ARGS"
+fi
+
+if [ -n "${FZF_SCRIPT_DIR:-}" ]; then
+  n=$(cat "$FZF_SCRIPT_DIR/n" 2>/dev/null || echo 0)
+  n=$((n + 1))
+  echo "$n" >"$FZF_SCRIPT_DIR/n"
+  [ -f "$FZF_SCRIPT_DIR/$n.out" ] || exit 130
+  cat "$FZF_SCRIPT_DIR/$n.out"
+  exit "$(cat "$FZF_SCRIPT_DIR/$n.rc" 2>/dev/null || echo 0)"
+fi
+
+[ -z "${FZF_SCRIPT_OUT:-}" ] || printf '%s\n' "$FZF_SCRIPT_OUT"
+exit "${FZF_SCRIPT_RC:-0}"

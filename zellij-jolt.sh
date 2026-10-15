@@ -125,8 +125,11 @@ FZF_VER="${FZF_VER:-}"
 # An inherited FZF_VER is trusted only if it is a plain integer.
 [[ $FZF_VER =~ ^[0-9]+$ ]] || FZF_VER=""
 
+# warn MSG — message on stderr. Sets JOLT_SAID so --action knows to pause
+# before fzf redraws over it.
 warn() {
     printf 'zellij-jolt: %s\n' "$*" >&2
+    JOLT_SAID=1
 }
 
 # fallback_shell — keep the terminal usable when we are its startup command:
@@ -166,7 +169,7 @@ ver_to_int() {
 # fzf_detect — set FZF_VER (ver_to_int scale) from `fzf --version`, 0 if absent.
 fzf_detect() {
     local out
-    out=$(fzf --version 2>/dev/null) || out=""
+    out=$("${JOLT_FZF:-fzf}" --version 2>/dev/null) || out=""
     FZF_VER=$(ver_to_int "${out%% *}")
 }
 
@@ -193,7 +196,7 @@ check_deps() {
         warn "bash >= $JOLT_MIN_BASH required (found $have; macOS: brew install bash)"
         rc=1
     fi
-    if ! command -v fzf >/dev/null 2>&1; then
+    if ! command -v "${JOLT_FZF:-fzf}" >/dev/null 2>&1; then
         warn "fzf not found (need >= $JOLT_MIN_FZF)"
         rc=1
     else
@@ -227,6 +230,12 @@ JOLT_CFG_KEYS=(
     KEY_PREVIEW KEY_HELP KEY_CREATE
 )
 
+# Default keybindings, KEY=fzf-key-name. Users override them with KEY_*.
+JOLT_KEY_DEFAULTS=(
+    DELETE=ctrl-d PURGE=alt-d RENAME=ctrl-r PIN=ctrl-t PROJECT=ctrl-o
+    LAYOUT=ctrl-l PREVIEW=ctrl-/ 'HELP=?' CREATE=alt-enter
+)
+
 _cfg_defaults() {
     CFG_PROJECT_ROOTS="$HOME/projects $HOME/code $HOME/src $HOME/dev"
     CFG_PROJECT_DEPTH=3
@@ -236,15 +245,24 @@ _cfg_defaults() {
     CFG_SHOW_EXITED=on
     CFG_THEME=auto
     CFG_CONFIRM_DELETE=on
-    CFG_KEY_DELETE=ctrl-d
-    CFG_KEY_PURGE=alt-d
-    CFG_KEY_RENAME=ctrl-r
-    CFG_KEY_PIN=ctrl-t
-    CFG_KEY_PROJECT=ctrl-o
-    CFG_KEY_LAYOUT=ctrl-l
-    CFG_KEY_PREVIEW=ctrl-/
-    CFG_KEY_HELP='?'
-    CFG_KEY_CREATE=alt-enter
+    local kv
+    for kv in "${JOLT_KEY_DEFAULTS[@]}"; do
+        printf -v "CFG_KEY_${kv%%=*}" '%s' "${kv#*=}"
+    done
+}
+
+# _cfg_keys_check — KEY_* values are spliced into fzf --bind/--expect, so
+# only plain fzf key names (ctrl-d, alt-enter, ctrl-/, ?, f1…) are allowed;
+# anything else (",", ":", "+", parentheses, spaces…) is warned about and
+# replaced by the default.
+_cfg_keys_check() {
+    local kv var
+    for kv in "${JOLT_KEY_DEFAULTS[@]}"; do
+        var="CFG_KEY_${kv%%=*}"
+        [[ ${!var} =~ ^[a-z0-9/?-]+$ ]] && continue
+        warn "config: invalid key name for KEY_${kv%%=*}: ${!var} (using ${kv#*=})"
+        printf -v "$var" '%s' "${kv#*=}"
+    done
 }
 
 # _cfg_expand_tilde VALUE — leading "~" or "~/" → $HOME.
@@ -302,6 +320,7 @@ config_load() {
         fi
         printf -v "CFG_$key" '%s' "$val"
     done <"$file"
+    _cfg_keys_check
     return 0
 }
 
@@ -716,9 +735,9 @@ sessions_read() {
     while IFS= read -r line; do
         line=${line%$'\r'}
         [[ $line =~ $re ]] || continue
-        # A TAB in the name would break this TSV record and the
-        # TAB-delimited picker rows.
-        [[ ${BASH_REMATCH[1]} == *$'\t'* ]] && continue
+        # Control chars (TAB, ESC…) would break the TSV records and the
+        # TAB-delimited picker rows, and fzf --ansi would mangle {1}.
+        [[ ${BASH_REMATCH[1]} == *[[:cntrl:]]* ]] && continue
         case ${BASH_REMATCH[4]} in
             current) st=current ;;
             EXITED*) st=exited ;;
@@ -1321,11 +1340,15 @@ _pv_edge() {
 }
 
 # _pv_row PREFIX TEXT [PREFIX_COLOR [TEXT_COLOR]] — one content line.
-# PREFIX must be narrower than the inner width (labels, tree glyphs).
+# A PREFIX wider than the inner width (tiny panes) is truncated.
 _pv_row() {
     local p=$1 pc=${3:-} tc=${4:-} pw
     _dwidth "$p"
     pw=$REPLY
+    if ((pw > _pv_w - 4)); then
+        _trunc "$p" $((_pv_w - 4))
+        p=$REPLY pw=$_jolt_tw
+    fi
     _pad "${2//[[:cntrl:]]/ }" $((_pv_w - 4 - pw))
     _pv_out+="${C_ACCENT}│${C_RESET} $pc$p${pc:+$C_RESET}$tc$REPLY${tc:+$C_RESET} ${C_ACCENT}│${C_RESET}"$'\n'
 }
@@ -1335,6 +1358,13 @@ _pv_kv() {
     local l
     printf -v l '%-10s' "$1"
     _pv_row "$l" "$2" "$C_MUTED" "${3:-}"
+}
+
+# _pv_key KEY DESC — "key        description" help row.
+_pv_key() {
+    local l
+    printf -v l '%-11s' "$1"
+    _pv_row "$l" "$2" "$C_ACCENT"
 }
 
 # _pv_wrap TEXT [COLOR] — TEXT word-wrapped over as many rows as needed.
@@ -1459,14 +1489,14 @@ _pv_session() {
 }
 
 # preview_render KEY — the fzf preview for a row key, as a box exactly
-# ${FZF_PREVIEW_COLUMNS:-60}-2 columns wide (min 20): session details for
+# ${FZF_PREVIEW_COLUMNS:-60}-2 columns wide (min 8): session details for
 # s:NAME, short help for a:new / a:project / a:layout.
 preview_render() {
     local key=${1:-} cols=${FZF_PREVIEW_COLUMNS:-60} _pv_w _pv_out=""
     _render_colors_init
     [[ $cols =~ ^[0-9]{1,4}$ ]] || cols=60
     _pv_w=$((10#$cols - 2))
-    ((_pv_w < 20)) && _pv_w=20
+    ((_pv_w < 8)) && _pv_w=8
     case $key in
         s:*)
             _pv_session "${key#s:}"
@@ -1490,6 +1520,23 @@ preview_render() {
             _pv_wrap "Start a new session from a layout (${CFG_KEY_LAYOUT:-ctrl-l}), then name it."
             _pv_row "" ""
             _pv_wrap "Lists your layouts in ~/.config/zellij/layouts plus the built-ins default, compact, classic and strider." "$C_MUTED"
+            _pv_edge ╰ ╯
+            ;;
+        a:help)
+            _pv_edge ╭ ╮ "keys"
+            _pv_key enter "open session / create from query"
+            _pv_key "${CFG_KEY_CREATE:-alt-enter}" "create from the query"
+            _pv_key "${CFG_KEY_DELETE:-ctrl-d}" "kill / delete session"
+            _pv_key "${CFG_KEY_PURGE:-alt-d}" "delete all exited sessions"
+            _pv_key "${CFG_KEY_RENAME:-ctrl-r}" "rename session"
+            _pv_key "${CFG_KEY_PIN:-ctrl-t}" "pin / unpin session"
+            _pv_key "${CFG_KEY_PROJECT:-ctrl-o}" "open a project directory"
+            _pv_key "${CFG_KEY_LAYOUT:-ctrl-l}" "new session from a layout"
+            _pv_key "${CFG_KEY_PREVIEW:-ctrl-/}" "toggle preview"
+            _pv_key "${CFG_KEY_HELP:-?}" "this help"
+            _pv_key esc "back / quit"
+            _pv_row "" ""
+            _pv_wrap "Move the cursor to return to the session preview." "$C_MUTED"
             _pv_edge ╰ ╯
             ;;
         *)
@@ -1712,6 +1759,7 @@ act_purge() {
     done < <(sessions_read)
     if ((${#exited[@]} == 0)); then
         printf 'no exited sessions\n'
+        JOLT_SAID=1
         return 0
     fi
     confirm "Delete ${#exited[@]} exited sessions?" || return 0
@@ -1851,11 +1899,398 @@ doctor() {
     return "$rc"
 }
 
-# (Task: pick_project, pick_layout.)
+# _pause — after a message, wait for one key so the next fzf redraw does
+# not wipe it. Only when stderr and $JOLT_TTY (default /dev/tty) are a
+# terminal; never blocks tests or scripts.
+_pause() {
+    local tty=${JOLT_TTY:-/dev/tty} k
+    [[ -t 2 && -c $tty && -r $tty ]] || return 0
+    printf '%s' "press any key…" >&2
+    { read -rsn1 k <"$tty"; } 2>/dev/null
+    printf '\n' >&2
+}
+
+# _name_prompt DEFAULT [EMPTY_OK] — ask for a session name on the terminal
+# ($JOLT_TTY, default /dev/tty; readline-edited and prefilled with DEFAULT
+# when it is a terminal). The sanitized name goes in REPLY. An empty answer
+# means DEFAULT; with no DEFAULT it yields REPLY="" when EMPTY_OK is set,
+# else asks once more. Returns 1 on cancel: EOF/ctrl-d, ctrl-c, a second
+# empty answer, or no terminal.
+_name_prompt() {
+    local def=${1:-} empty_ok=${2:-} tty=${JOLT_TTY:-/dev/tty} ans rc tries=0
+    while ((tries++ < 3)); do
+        [[ -r $tty ]] || return 1
+        # readline swallows ctrl-c inside `read -e`, so read in a subshell
+        # that exits on SIGINT while we ignore it; readline draws on
+        # stderr and only the answer comes back on stdout.
+        trap ':' INT
+        # shellcheck disable=SC2034  # a is used inside the subshell
+        ans=$(
+            trap 'exit 130' INT
+            IFS= read -r -e -i "$def" -p "Session name: " a <"$tty" >&2 || exit $?
+            printf '%s' "$a"
+        )
+        rc=$?
+        trap - INT
+        if ((rc > 128)); then
+            printf '\n' >&2
+            return 1
+        fi
+        ((rc == 0)) || [[ -n $ans ]] || return 1
+        _trim_line "$ans"
+        ans=${REPLY:-$def}
+        if [[ -z $ans ]]; then
+            if [[ -n $empty_ok ]]; then
+                REPLY=""
+                return 0
+            fi
+            ((tries >= 2)) && return 1
+            continue
+        fi
+        REPLY=$(sanitize_name "$ans") && return 0
+        warn "unusable session name: $ans"
+    done
+    return 1
+}
+
+# fzf_base_opts [HEADER] — fill the global FZF_OPTS array with the options
+# every picker shares: rows are KEY<TAB>DISPLAY, only DISPLAY is shown and
+# searched (fzf applies --nth to the --with-nth output, so no --nth is
+# needed — --nth=2.. would search nothing), theme colors, and bash for
+# callbacks when fzf supports it.
+fzf_base_opts() {
+    FZF_OPTS=(
+        --ansi --layout=reverse --info=inline --border=rounded
+        "--color=${FZF_COLOR_OPT:-16}"
+        --delimiter=$'\t' --with-nth=2..
+    )
+    # fzf runs callbacks via $SHELL -c unless told otherwise; ours only
+    # exec this script, but bash keeps zsh/fish quirks out of the way.
+    fzf_has with-shell && FZF_OPTS+=("--with-shell=bash -c")
+    [[ -n ${1:-} ]] && FZF_OPTS+=("--header=$1")
+    return 0
+}
+
+# _fzf_act ACTION CMD — "ACTION(CMD)" for --bind in REPLY, using the first
+# fzf-supported bracket pair that does not occur in CMD (a quoted path may
+# contain parentheses). Returns 1 if none fits.
+_fzf_act() {
+    local pair
+    for pair in '()' '[]' '{}' '<>' '~~' '!!' '@@' '##' '%%' '^^' '&&' '**' ';;' '//' '||'; do
+        [[ $2 == *"${pair:1:1}"* ]] && continue
+        REPLY="$1${pair:0:1}$2${pair:1:1}"
+        return 0
+    done
+    return 1
+}
+
+# ── projects & layouts ──────────────────────────────────────────────────
+
+# project_candidates — project directories, one per line, deduped: zoxide's
+# list (existing dirs only) when it has any, else the parent of every .git
+# directory up to PROJECT_DEPTH levels below each PROJECT_ROOTS entry
+# (fd when installed, else find).
+project_candidates() {
+    local d root fd="" depth=${CFG_PROJECT_DEPTH:-3} out="" noglob=0
+    local -a roots=()
+    local -A seen=()
+    if command -v zoxide >/dev/null 2>&1; then
+        while IFS= read -r d; do
+            [[ -n $d && -d $d && $d != *[[:cntrl:]]* && -z ${seen[$d]+x} ]] || continue
+            seen[$d]=1
+            out+="$d"$'\n'
+        done < <(zoxide query -l 2>/dev/null)
+        if [[ -n $out ]]; then
+            printf '%s' "$out"
+            return 0
+        fi
+    fi
+    [[ $depth =~ ^[0-9]{1,2}$ ]] && ((10#$depth > 0)) || depth=3
+    if command -v fd >/dev/null 2>&1; then
+        fd=fd
+    elif command -v fdfind >/dev/null 2>&1; then
+        fd=fdfind
+    fi
+    [[ $- == *f* ]] && noglob=1
+    set -f
+    read -r -a roots <<<"${CFG_PROJECT_ROOTS:-}"
+    ((noglob)) || set +f
+    for root in ${roots[@]+"${roots[@]}"}; do
+        [[ -d $root ]] || continue
+        while IFS= read -r d; do
+            d=${d%/}
+            d=${d%/.git}
+            [[ -n $d && $d != *[[:cntrl:]]* && -z ${seen[$d]+x} ]] || continue
+            seen[$d]=1
+            out+="$d"$'\n'
+        done < <(
+            if [[ -n $fd ]]; then
+                "$fd" -H -t d -d "$depth" '^\.git$' "$root"
+            else
+                find "$root" -maxdepth "$depth" -type d -name .git -prune -print
+            fi 2>/dev/null | sort
+        )
+    done
+    printf '%s' "$out"
+}
+
+# project_session_name DIR — session name for a project: the sanitized
+# basename of DIR's git top level, or of DIR itself outside a repo.
+project_session_name() {
+    local top
+    top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || top=""
+    [[ -n $top ]] || top=${1%/}
+    sanitize_name "${top##*/}"
+}
+
+# preview_dir DIR — the project picker preview: git branch, then a listing.
+preview_dir() {
+    local d=${1:-} b
+    if [[ ! -d $d ]]; then
+        printf 'not a directory: %s\n' "$d"
+        return 0
+    fi
+    b=$(git -C "$d" branch --show-current 2>/dev/null) || b=""
+    [[ -n $b ]] && printf 'branch: %s\n\n' "$b"
+    { ls -A --color=always -- "$d" 2>/dev/null || ls -A -- "$d" 2>/dev/null; } | head -50
+    return 0
+}
+
+# pick_project — fzf over project_candidates, then go to the project's
+# session (created in the directory with DEFAULT_LAYOUT when new).
+# Returns 1 when cancelled or when nothing was opened.
+pick_project() {
+    local d disp rows="" out rc dir name h=${HOME:-}
+    local -a cands
+    h=${h%/}
+    mapfile -t cands < <(project_candidates)
+    if ((${#cands[@]} == 0)); then
+        warn "no projects found (zoxide, or git repos under PROJECT_ROOTS: ${CFG_PROJECT_ROOTS:-})"
+        _pause
+        return 1
+    fi
+    for d in "${cands[@]}"; do
+        disp=$d
+        # shellcheck disable=SC2088  # literal ~ for display only
+        [[ -n $h && $d == "$h"/* ]] && disp="~/${d#"$h"/}"
+        rows+="$d"$'\t'"$disp"$'\n'
+    done
+    fzf_base_opts "enter open project · esc back"
+    out=$("${JOLT_FZF:-fzf}" "${FZF_OPTS[@]}" --prompt='project> ' \
+        --preview "$JOLT_Q --preview-dir {1}" --preview-window "$(_preview_pos):50%" \
+        < <(printf '%s' "$rows"))
+    rc=$?
+    case $rc in
+        0) ;;
+        1 | 130) return 1 ;;
+        *)
+            warn "fzf failed (rc $rc)"
+            _pause
+            return 1
+            ;;
+    esac
+    dir=${out%%$'\n'*}
+    dir=${dir%%$'\t'*}
+    [[ -n $dir ]] || return 1
+    if ! name=$(project_session_name "$dir"); then
+        warn "cannot name a session after $dir"
+        _pause
+        return 1
+    fi
+    go "$name" "$dir" "${CFG_DEFAULT_LAYOUT:-}" && return 0
+    _pause
+    return 1
+}
+
+# layout_candidates — layout names: the user's layouts (*.kdl next to the
+# zellij config, swap layouts excluded) then the built-ins, deduped.
+layout_candidates() {
+    local f n out=""
+    local -A seen=()
+    for f in "${JOLT_ZELLIJ_CONFIG%/*}"/layouts/*.kdl default compact classic strider; do
+        if [[ $f == */* ]]; then
+            [[ -f $f ]] || continue
+            n=${f##*/}
+            n=${n%.kdl}
+            [[ $n == *.swap || $n == *[[:cntrl:]]* ]] && continue
+        else
+            n=$f
+        fi
+        [[ -n $n && -z ${seen[$n]+x} ]] || continue
+        seen[$n]=1
+        out+="$n"$'\n'
+    done
+    printf '%s' "$out"
+}
+
+# pick_layout QUERY — fzf over layouts, then ask for the session name
+# (prefilled with QUERY) and create it with that layout. Returns 1 when
+# cancelled or when nothing was opened.
+pick_layout() {
+    local query=${1:-} n rows="" out rc layout
+    while IFS= read -r n; do
+        rows+="$n"$'\t'"$n"$'\n'
+    done < <(layout_candidates)
+    fzf_base_opts "enter choose layout · esc back"
+    out=$("${JOLT_FZF:-fzf}" "${FZF_OPTS[@]}" --prompt='layout> ' --no-preview \
+        < <(printf '%s' "$rows"))
+    rc=$?
+    case $rc in
+        0) ;;
+        1 | 130) return 1 ;;
+        *)
+            warn "fzf failed (rc $rc)"
+            _pause
+            return 1
+            ;;
+    esac
+    layout=${out%%$'\n'*}
+    layout=${layout%%$'\t'*}
+    [[ -n $layout ]] || return 1
+    _name_prompt "$query" || return 1
+    go "$REPLY" "" "$layout" && return 0
+    _pause
+    return 1
+}
 
 # ── picker ──────────────────────────────────────────────────────────────
 
-# (Task: picker_main.)
+# _preview_pos — PREVIEW_POS if valid, else right.
+_preview_pos() {
+    case ${CFG_PREVIEW_POS:-right} in
+        right | left | top | bottom) printf '%s' "$CFG_PREVIEW_POS" ;;
+        *) printf right ;;
+    esac
+}
+
+# _picker_export — export the theme and paths to fzf's callbacks so
+# --list/--preview skip theme_load and agree with the picker. Call it in
+# the fzf command substitution so zellij never inherits them.
+_picker_export() {
+    export C_RESET C_DIM C_BOLD C_ITA C_ACCENT C_OK C_WARN C_MUTED C_TITLE
+    export FZF_COLOR_OPT JOLT_THEME_DESC
+    export JOLT_CACHE_DIR JOLT_ZELLIJ_CONFIG JOLT_CONFIG_FILE JOLT_STATE_DIR
+}
+
+# _picker_bind KEY ACTION CMD [reload] — append "--bind KEY:ACTION(CMD)"
+# (plus "+reload(<self> --list)") to picker_main's binds array.
+_picker_bind() {
+    local b
+    _fzf_act "$2" "$3" || {
+        warn "cannot bind $1: no usable fzf delimiter"
+        return 1
+    }
+    b=$REPLY
+    if [[ -n ${4:-} ]]; then
+        _fzf_act reload "$JOLT_Q --list" || return 1
+        b+="+$REPLY"
+    fi
+    binds+=(--bind "$1:$b")
+}
+
+# _picker_go_query QUERY — create/open the session named after QUERY.
+_picker_go_query() {
+    local name
+    if ! name=$(sanitize_name "$1"); then
+        warn "unusable session name: $1"
+        _pause
+        return 1
+    fi
+    go "$name" && return 0
+    _pause
+    return 1
+}
+
+# picker_main — the main picker loop. Needs a terminal (stdin, else
+# /dev/tty; JOLT_TEST_TTY=1 skips the check). Expects config_load and
+# theme_load to have run. fzf exit codes: 130 (esc) quits with 0, 1 (no
+# match) creates the typed query, 0 dispatches the expect key or the
+# selected row, anything else falls back to a shell. Only returns via
+# exit; a sub-picker or prompt that is cancelled loops back.
+picker_main() {
+    local out rc query key row k empty_ok win header
+    local -a lines binds=()
+    if [[ -z ${JOLT_TEST_TTY:-} && ! -t 0 ]]; then
+        if ! { [[ -r /dev/tty ]] && { exec </dev/tty; } 2>/dev/null; }; then
+            warn "no terminal to run the picker on"
+            fallback_shell
+        fi
+    fi
+    printf -v JOLT_Q '%q' "$JOLT_SELF"
+
+    win="$(_preview_pos):55%:wrap"
+    [[ ${CFG_PREVIEW:-on} == off ]] && win+=":hidden"
+    _picker_bind "$CFG_KEY_DELETE" execute "$JOLT_Q --action delete {1}" reload
+    _picker_bind "$CFG_KEY_PURGE" execute "$JOLT_Q --action purge" reload
+    _picker_bind "$CFG_KEY_RENAME" execute "$JOLT_Q --action rename {1}" reload
+    _picker_bind "$CFG_KEY_PIN" execute-silent "$JOLT_Q --action pin {1}" reload
+    _picker_bind "$CFG_KEY_HELP" preview "$JOLT_Q --preview a:help"
+    binds+=(--bind "$CFG_KEY_PREVIEW:toggle-preview")
+
+    # Short enough for the list pane; the full map is one key away.
+    header="$CFG_KEY_HELP keys · enter open · $CFG_KEY_CREATE new"
+
+    while :; do
+        fzf_base_opts "$header"
+        fzf_has ghost && FZF_OPTS+=("--ghost=type to filter or name a new session")
+        out=$(
+            _picker_export
+            "${JOLT_FZF:-fzf}" "${FZF_OPTS[@]}" --prompt='jolt> ' --print-query \
+                "--expect=$CFG_KEY_CREATE,$CFG_KEY_PROJECT,$CFG_KEY_LAYOUT" \
+                --preview "$JOLT_Q --preview {1}" --preview-window "$win" \
+                "${binds[@]}" < <(rows_build)
+        )
+        rc=$?
+        case $rc in
+            0 | 1) ;;
+            130) exit 0 ;;
+            *)
+                warn "fzf failed (rc $rc)"
+                fallback_shell
+                ;;
+        esac
+        mapfile -t lines <<<"$out"
+        query=${lines[0]:-} key=${lines[1]:-} row=${lines[2]:-}
+        k=${row%%$'\t'*}
+
+        if [[ $key == "$CFG_KEY_PROJECT" || (-z $key && $k == a:project) ]]; then
+            pick_project && exit 0
+            continue
+        fi
+        if [[ $key == "$CFG_KEY_LAYOUT" || (-z $key && $k == a:layout) ]]; then
+            pick_layout "$query" && exit 0
+            continue
+        fi
+        if [[ $key == "$CFG_KEY_CREATE" || $rc == 1 ]]; then
+            [[ -n $query ]] || continue
+            _picker_go_query "$query" && exit 0
+            continue
+        fi
+        case $k in
+            a:new)
+                if [[ -n $query ]]; then
+                    _picker_go_query "$query" && exit 0
+                    continue
+                fi
+                # Outside zellij an empty name lets zellij pick one; inside,
+                # switch-session needs a name.
+                empty_ok=1
+                [[ -n ${ZELLIJ:-} ]] && empty_ok=""
+                _name_prompt "" "$empty_ok" || continue
+                if [[ -z $REPLY ]]; then
+                    run_or_exec zellij && exit 0
+                    continue
+                fi
+                go "$REPLY" && exit 0
+                _pause
+                ;;
+            s:?*)
+                go "${k#s:}" && exit 0
+                _pause
+                ;;
+        esac
+    done
+}
 
 # ── main ────────────────────────────────────────────────────────────────
 
@@ -1872,6 +2307,20 @@ Usage:
   zellij-jolt --init-shell SHELL      print guarded auto-start snippet (bash|zsh|fish)
   zellij-jolt --doctor                environment diagnostics
   zellij-jolt --version | --help
+  zellij-jolt --preview-dir DIR       (internal) project preview listing
+
+Keys (change with KEY_* in the config; defaults shown):
+  enter        open the selected session / create the typed name
+  alt-enter    create a session named after the query      KEY_CREATE
+  ctrl-d       kill / delete the selected session          KEY_DELETE
+  alt-d        delete all exited sessions                  KEY_PURGE
+  ctrl-r       rename the selected session                 KEY_RENAME
+  ctrl-t       pin / unpin the selected session            KEY_PIN
+  ctrl-o       open a project directory as a session       KEY_PROJECT
+  ctrl-l       new session from a layout                   KEY_LAYOUT
+  ctrl-/       toggle the preview                          KEY_PREVIEW
+  ?            key help in the preview                     KEY_HELP
+  esc          back / quit
 
 Config: $JOLT_CONFIG_FILE
 EOF
@@ -1914,10 +2363,14 @@ _usage_error() {
 }
 
 main() {
+    local rc
     case "${1:-}" in
-        "")
+        "" | --dry-run)
+            [[ ${1:-} == --dry-run ]] && JOLT_DRY_RUN=1
+            config_load
+            theme_load
             check_deps || die "missing or outdated dependencies"
-            die "not implemented"
+            picker_main
             ;;
         --version | -V)
             echo "zellij-jolt $JOLT_VERSION"
@@ -1926,15 +2379,19 @@ main() {
             usage
             ;;
         --list)
-            config_load
+            config_load 2>/dev/null
             render_theme
             rows_build
             ;;
         --preview)
             (($# >= 2)) || _usage_error "--preview needs a KEY"
-            config_load
+            config_load 2>/dev/null
             render_theme
             preview_render "$2"
+            ;;
+        --preview-dir)
+            (($# >= 2)) || _usage_error "--preview-dir needs a DIR"
+            preview_dir "$2"
             ;;
         --action)
             (($# >= 2)) || _usage_error "--action needs ACT and KEY"
@@ -1943,14 +2400,17 @@ main() {
                 *) _usage_error "unknown action: $2 (delete|rename|pin|purge)" ;;
             esac
             [[ $2 == purge || $# -ge 3 ]] || _usage_error "--action $2 needs a KEY"
-            config_load
+            config_load 2>/dev/null
+            # Runs inside fzf execute(): fzf redraws as soon as we exit,
+            # so pause when there is a message or a failure to read.
+            # pin runs via execute-silent and must never wait.
+            JOLT_SAID=""
             action_dispatch "$2" "${3:-}"
-            exit $?
-            ;;
-        --dry-run)
-            JOLT_DRY_RUN=1
-            check_deps || die "missing or outdated dependencies"
-            die "not implemented"
+            rc=$?
+            if [[ $2 != pin ]] && { ((rc != 0)) || [[ -n $JOLT_SAID ]]; }; then
+                _pause
+            fi
+            exit "$rc"
             ;;
         --init-shell)
             (($# >= 2)) || _usage_error "--init-shell needs a SHELL (bash|zsh|fish)"

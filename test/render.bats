@@ -132,6 +132,13 @@ kdl_pane() {
   assert_output $'good\tactive\t1s'
 }
 
+@test "sessions_read skips names containing control characters" {
+  printf '%s\n' $'esc\e[31mname [Created 1s ago] ' $'bell\aname [Created 1s ago] ' 'good [Created 1s ago] ' >"$BATS_TEST_TMPDIR/ls.txt"
+  export STUB_LS="$BATS_TEST_TMPDIR/ls.txt"
+  run sessions_read
+  assert_output $'good\tactive\t1s'
+}
+
 # ── preview_render ──────────────────────────────────────────────────────
 
 @test "preview box lines all same display width" {
@@ -145,13 +152,23 @@ kdl_pane() {
   theme_load
   local s cols l
   for s in appr memora_new obsidian jumping-tambourine 'my proj (x)' ghost a:new a:project a:layout; do
-    for cols in 30 50 80; do
+    for cols in 10 30 50 80; do
       [[ $s == a:* ]] && k=$s || k="s:$s"
       out=$(FZF_PREVIEW_COLUMNS=$cols preview_render "$k" | strip_ansi)
       while IFS= read -r l; do
         [ "$(dwidth "$l")" -eq $((cols - 2)) ] || { echo "bad ($s,$cols): $l"; false; }
       done <<<"$out"
     done
+  done
+}
+
+@test "preview in a tiny pane is clamped to 8 columns" {
+  local l
+  for cols in 3 9; do
+    out=$(FZF_PREVIEW_COLUMNS=$cols preview_render "s:appr" | strip_ansi)
+    while IFS= read -r l; do
+      [ "$(dwidth "$l")" -eq 8 ] || { echo "bad ($cols): $l"; false; }
+    done <<<"$out"
   done
 }
 
