@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Generic no-op stub for terminal emulator binaries (alacritty, ghostty,
+# kitty, wezterm, foot) used by install.bats: install.sh only checks
+# presence via `command -v`, it never actually invokes these.
+exit 0
