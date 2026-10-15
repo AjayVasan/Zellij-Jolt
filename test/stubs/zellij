@@ -63,8 +63,9 @@ list-sessions | ls)
   fi
   exit 0
   ;;
+# STUB_ZELLIJ_VERSION overrides the reported version (default 0.45.1).
 --version)
-  echo "zellij 0.45.1"
+  echo "zellij ${STUB_ZELLIJ_VERSION:-0.45.1}"
   exit 0
   ;;
 # STUB_RC_KILL / STUB_RC_DELETE: when set, kill-session / delete-session of

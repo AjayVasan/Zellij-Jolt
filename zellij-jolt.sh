@@ -38,6 +38,14 @@ JOLT_VERSION="2.0.0"
 JOLT_MIN_BASH="4.2"
 JOLT_MIN_FZF="0.38.0"
 JOLT_MIN_ZELLIJ="0.39.0"
+# `zellij action switch-session NAME` (with its --cwd / --layout flags) first
+# shipped in zellij 0.44.0 — zellij-org/zellij PR #4492, CHANGELOG 0.44.0
+# "feat: improve cli interface (add detach, switch-session and more)";
+# SwitchSession is absent from zellij-utils/src/cli.rs at v0.39.2…v0.43.1.
+# https://github.com/zellij-org/zellij/pull/4492
+# https://github.com/zellij-org/zellij/blob/main/CHANGELOG.md
+# Outside zellij 0.39 is enough; switching from inside needs this floor.
+JOLT_MIN_ZELLIJ_SWITCH="0.44.0"
 
 # _jolt_resolve_self — absolute path of this script without `readlink -f`
 # (not on stock macOS). Follows one symlink level, e.g. ~/.local/bin link.
@@ -166,6 +174,18 @@ ver_to_int() {
     fi
 }
 
+# zellij_ver — zellij's version (ver_to_int scale) in REPLY, 0 when
+# unknown. `zellij --version` runs at most once per process (cached in
+# ZELLIJ_VER; the raw output in ZELLIJ_VER_RAW).
+ZELLIJ_VER="" ZELLIJ_VER_RAW=""
+zellij_ver() {
+    if [[ -z $ZELLIJ_VER ]]; then
+        ZELLIJ_VER_RAW=$(zellij --version 2>/dev/null) || ZELLIJ_VER_RAW=""
+        ZELLIJ_VER=$(ver_to_int "$ZELLIJ_VER_RAW")
+    fi
+    REPLY=$ZELLIJ_VER
+}
+
 # fzf_detect — set FZF_VER (ver_to_int scale) from `fzf --version`, 0 if absent.
 fzf_detect() {
     local out
@@ -190,7 +210,7 @@ fzf_has() {
 # check_deps — verify bash, fzf and zellij meet the floors. Prints every
 # problem found and returns non-zero if any.
 check_deps() {
-    local rc=0 out have
+    local rc=0 have
     have="${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"
     if (($(ver_to_int "$have") < $(ver_to_int "$JOLT_MIN_BASH"))); then
         warn "bash >= $JOLT_MIN_BASH required (found $have; macOS: brew install bash)"
@@ -210,9 +230,9 @@ check_deps() {
         warn "zellij not found (need >= $JOLT_MIN_ZELLIJ)"
         rc=1
     else
-        out=$(zellij --version 2>/dev/null) || out=""
-        if (($(ver_to_int "$out") < $(ver_to_int "$JOLT_MIN_ZELLIJ"))); then
-            warn "zellij >= $JOLT_MIN_ZELLIJ required (found ${out:-unknown})"
+        zellij_ver
+        if ((REPLY < $(ver_to_int "$JOLT_MIN_ZELLIJ"))); then
+            warn "zellij >= $JOLT_MIN_ZELLIJ required (found ${ZELLIJ_VER_RAW:-unknown})"
             rc=1
         fi
     fi
@@ -1716,6 +1736,13 @@ go() {
             printf 'already in %s\n' "$name"
             return 0
         fi
+        # switch-session (and its --cwd/--layout) only exists in newer
+        # zellij; on older ones say so instead of exec'ing a failing command.
+        zellij_ver
+        if ((REPLY > 0 && REPLY < $(ver_to_int "$JOLT_MIN_ZELLIJ_SWITCH"))); then
+            warn "switching sessions from inside zellij needs zellij ≥$JOLT_MIN_ZELLIJ_SWITCH; detach first (Ctrl-o d) and run zellij-jolt"
+            return 1
+        fi
         state_touch "$name" || true
         # Options first, then `--` so a name starting with "-" stays a name.
         argv=(zellij action switch-session)
@@ -1724,6 +1751,13 @@ go() {
         argv+=(-- "$name")
         run_or_exec "${argv[@]}"
         return
+    fi
+    # `zellij attach` has no safe form for a name starting with "-": clap
+    # reads it as a flag, and `--` there introduces INITIAL_COMMAND, not the
+    # name (--index is creation-order and racy). Refuse instead of guessing.
+    if [[ $name == -* ]]; then
+        warn "sessions whose names start with '-' can't be attached safely; rename it"
+        return 1
     fi
     state_touch "$name" || true
     if [[ -z $new ]]; then

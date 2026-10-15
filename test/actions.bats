@@ -100,6 +100,56 @@ stub_count() {
   assert_output "DRY: zellij action switch-session --cwd /tmp --layout compact -- fresh"
 }
 
+@test "go inside zellij older than 0.44 refuses to switch with a clear message" {
+  STUB_ZELLIJ_VERSION=0.43.1 ZELLIJ=0 ZELLIJ_SESSION_NAME=obsidian run go appr
+  assert_failure
+  assert_output --partial "switching sessions from inside zellij needs zellij ≥0.44.0; detach first (Ctrl-o d) and run zellij-jolt"
+  refute_output --partial "DRY:"
+  STUB_ZELLIJ_VERSION=0.39.0 ZELLIJ=0 ZELLIJ_SESSION_NAME=obsidian run go fresh /tmp compact
+  assert_failure
+  refute_output --partial "DRY:"
+}
+
+@test "go inside zellij 0.44.0 switches (with cwd/layout)" {
+  STUB_ZELLIJ_VERSION=0.44.0 ZELLIJ=0 ZELLIJ_SESSION_NAME=obsidian run go fresh /tmp compact
+  assert_success
+  assert_output "DRY: zellij action switch-session --cwd /tmp --layout compact -- fresh"
+}
+
+@test "old zellij still attaches outside zellij" {
+  STUB_ZELLIJ_VERSION=0.39.0 run go appr
+  assert_success
+  assert_output "DRY: zellij attach appr"
+}
+
+@test "zellij --version runs once per process (cached)" {
+  export ZELLIJ=0 ZELLIJ_SESSION_NAME=obsidian
+  go appr >/dev/null
+  go fresh >/dev/null
+  check_deps 2>/dev/null || true
+  run grep -c '^--version' "$STUB_LOG"
+  assert_output 1
+}
+
+@test "go refuses to attach a session whose name starts with '-' outside zellij" {
+  printf '%s\n' '-x [Created 1m ago]' >"$BATS_TEST_TMPDIR/dash.ls"
+  STUB_LS="$BATS_TEST_TMPDIR/dash.ls" run go -x
+  assert_failure
+  assert_output --partial "sessions whose names start with '-' can't be attached safely; rename it"
+  refute_output --partial "DRY:"
+  # a new name starting with '-' (attach -c / -n -s) is refused too
+  run go -new
+  assert_failure
+  refute_output --partial "DRY:"
+}
+
+@test "inside zellij a '-' name still switches safely after --" {
+  printf '%s\n' '-x [Created 1m ago]' >"$BATS_TEST_TMPDIR/dash.ls"
+  STUB_LS="$BATS_TEST_TMPDIR/dash.ls" ZELLIJ=0 ZELLIJ_SESSION_NAME=obsidian run go -x
+  assert_success
+  assert_output "DRY: zellij action switch-session -- -x"
+}
+
 @test "go to current is noop" {
   ZELLIJ=0 ZELLIJ_SESSION_NAME=obsidian run go obsidian
   assert_success
