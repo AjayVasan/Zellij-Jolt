@@ -311,7 +311,354 @@ config_load() {
 
 # ── data ────────────────────────────────────────────────────────────────
 
-# (Task: sessions_read, meta_read, layout_cwd, state_*, last_used.)
+# All parsing here is pure bash (no per-line subshells or external tools):
+# sessions_read and meta_read run for every row on each --list/preview.
+# Hot-path helpers have underscore twins that return in REPLY.
+# Bash 4.2 treats "${arr[@]}" of an empty array as unset under `set -u`,
+# hence the ${arr[@]+"${arr[@]}"} idiom below.
+
+# _jolt_now — current epoch in REPLY (JOLT_NOW overrides, for tests).
+_jolt_now() {
+    if [[ ${JOLT_NOW:-} =~ ^[0-9]+$ ]]; then
+        REPLY=$JOLT_NOW
+    else
+        printf -v REPLY '%(%s)T' -1
+    fi
+}
+
+# _trim_line LINE — LINE without surrounding whitespace or trailing CR, in REPLY.
+_trim_line() {
+    local s=${1%$'\r'}
+    s=${s#"${s%%[![:space:]]*}"}
+    REPLY=${s%"${s##*[![:space:]]}"}
+}
+
+# _kdl_str VALUE — decode a KDL string token ("…") in REPLY: outer quotes
+# dropped, \" and \\ unescaped, \n \t \r and raw control chars → space so
+# the result is always safe inside one TSV field.
+_kdl_str() {
+    local s=$1 bs='\'
+    s=${s#\"}
+    s=${s%\"}
+    s=${s//[[:cntrl:]]/ }
+    s=${s//"$bs$bs"/$'\x01'}
+    s=${s//"$bs\""/\"}
+    s=${s//"${bs}n"/ }
+    s=${s//"${bs}t"/ }
+    s=${s//"${bs}r"/ }
+    REPLY=${s//$'\x01'/$bs}
+}
+
+# sessions_read — parse `zellij list-sessions -n` into lines
+# NAME<TAB>STATUS<TAB>AGE, STATUS ∈ active|current|exited. Unparsable
+# lines are skipped; a zellij error (e.g. no sessions) yields no output.
+sessions_read() {
+    local out line st buf=""
+    local re='^(.*)\ \[Created\ (.*)\ ago\]\ ?(\((current|EXITED[^)]*)\))?\ *$'
+    out=$(zellij list-sessions -n 2>/dev/null) || return 0
+    while IFS= read -r line; do
+        line=${line%$'\r'}
+        [[ $line =~ $re ]] || continue
+        case ${BASH_REMATCH[4]} in
+            current) st=current ;;
+            EXITED*) st=exited ;;
+            *) st=active ;;
+        esac
+        buf+="${BASH_REMATCH[1]}"$'\t'"$st"$'\t'"${BASH_REMATCH[2]}"$'\n'
+    done <<<"$out"
+    printf '%s' "$buf"
+}
+
+# meta_read NAME — parse $JOLT_CACHE_DIR/NAME/session-metadata.kdl into
+#   tab<TAB>POSITION<TAB>ACTIVE<TAB>NAME
+#   pane<TAB>TAB_POSITION<TAB>TITLE<TAB>COMMAND
+# Only non-plugin, non-suppressed panes are listed; COMMAND is the pane's
+# terminal_command or empty. Fields are taken only from tab/pane blocks
+# directly under the top-level tabs/panes blocks (brace depth 2), so
+# nested history/layout blocks never leak in. Returns 1 if the file is
+# missing.
+meta_read() {
+    local f="$JOLT_CACHE_DIR/$1/session-metadata.kdl"
+    local line key val depth=0 top="" blk="" buf=""
+    local t_pos t_act t_name p_tab p_title p_cmd p_plugin p_supp
+    [[ -n $1 && -f $f && -r $f ]] || return 1
+    while IFS= read -r line || [[ -n $line ]]; do
+        _trim_line "$line"
+        line=$REPLY
+        if [[ $line == *'{' ]]; then
+            depth=$((depth + 1))
+            key=${line%%[[:space:]\{]*}
+            if ((depth == 1)); then
+                top=$key
+            elif ((depth == 2)); then
+                blk=$key
+                t_pos="" t_act="" t_name=""
+                p_tab="" p_title="" p_cmd="" p_plugin="" p_supp=""
+            fi
+            continue
+        fi
+        if [[ $line == '}' ]]; then
+            if ((depth == 2)); then
+                if [[ $top == tabs && $blk == tab ]]; then
+                    buf+="tab"$'\t'"$t_pos"$'\t'"${t_act:-false}"$'\t'"$t_name"$'\n'
+                elif [[ $top == panes && $blk == pane && $p_plugin == false && $p_supp == false ]]; then
+                    buf+="pane"$'\t'"$p_tab"$'\t'"$p_title"$'\t'"$p_cmd"$'\n'
+                fi
+                blk=""
+            fi
+            ((depth > 0)) && depth=$((depth - 1))
+            continue
+        fi
+        ((depth == 2)) || continue
+        key=${line%%[[:space:]]*}
+        val=${line#"$key"}
+        val=${val#"${val%%[![:space:]]*}"}
+        case "$top/$blk/$key" in
+            tabs/tab/position) t_pos=$val ;;
+            tabs/tab/active) t_act=$val ;;
+            tabs/tab/name)
+                _kdl_str "$val"
+                t_name=$REPLY
+                ;;
+            panes/pane/is_plugin) p_plugin=$val ;;
+            panes/pane/is_suppressed) p_supp=$val ;;
+            panes/pane/tab_position) p_tab=$val ;;
+            panes/pane/title)
+                _kdl_str "$val"
+                p_title=$REPLY
+                ;;
+            panes/pane/terminal_command)
+                _kdl_str "$val"
+                p_cmd=$REPLY
+                ;;
+        esac
+    done <"$f"
+    printf '%s' "$buf"
+}
+
+# layout_cwd NAME — the top-level `cwd "…"` of NAME's cached
+# session-layout.kdl, or empty (always succeeds).
+layout_cwd() {
+    local f="$JOLT_CACHE_DIR/$1/session-layout.kdl" line depth=0
+    [[ -n $1 && -f $f && -r $f ]] || return 0
+    while IFS= read -r line || [[ -n $line ]]; do
+        _trim_line "$line"
+        line=$REPLY
+        if [[ $line == *'{' ]]; then
+            depth=$((depth + 1))
+        elif [[ $line == '}' ]]; then
+            ((depth > 0)) && depth=$((depth - 1))
+        elif ((depth <= 1)) && [[ $line == 'cwd "'* ]]; then
+            _kdl_str "${line#cwd }"
+            printf '%s\n' "$REPLY"
+            return 0
+        fi
+    done <"$f"
+    return 0
+}
+
+# state_file mru|pins — path of a state file under $JOLT_STATE_DIR
+# (${XDG_STATE_HOME:-~/.local/state}/zellij-jolt). mru holds lines
+# EPOCH<TAB>NAME (newest first), pins one NAME per line.
+state_file() {
+    printf '%s/%s\n' "$JOLT_STATE_DIR" "$1"
+}
+
+# _state_ok NAME — NAME is storable (non-empty, no tab or newline).
+_state_ok() {
+    [[ -n $1 && $1 != *[$'\t\n']* ]]
+}
+
+# _state_load KIND — lines of state file KIND into _jolt_state (empty if
+# the file is missing/unreadable).
+_state_load() {
+    _jolt_state=()
+    local f="$JOLT_STATE_DIR/$1"
+    [[ -f $f && -r $f ]] || return 0
+    mapfile -t _jolt_state <"$f"
+}
+
+# _state_save KIND — atomically replace state file KIND with _jolt_state:
+# write a temp file in the same directory, then rename over the original.
+_state_save() {
+    local f="$JOLT_STATE_DIR/$1" tmp
+    mkdir -p "$JOLT_STATE_DIR" 2>/dev/null || {
+        warn "cannot create state dir $JOLT_STATE_DIR"
+        return 1
+    }
+    tmp="$f.tmp.$$.$RANDOM"
+    if ! {
+        ((${#_jolt_state[@]} == 0)) || printf '%s\n' "${_jolt_state[@]}"
+    } >"$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        warn "cannot write $f"
+        return 1
+    fi
+    mv -f "$tmp" "$f" 2>/dev/null || {
+        rm -f "$tmp"
+        warn "cannot write $f"
+        return 1
+    }
+}
+
+# state_touch NAME — record NAME as used now (upsert into mru, newest first).
+state_touch() {
+    local name=$1 l
+    local -a keep
+    _state_ok "$name" || return 1
+    _jolt_now
+    keep=("$REPLY"$'\t'"$name")
+    _state_load mru
+    for l in ${_jolt_state[@]+"${_jolt_state[@]}"}; do
+        [[ ${l#*$'\t'} == "$name" ]] || keep+=("$l")
+    done
+    _jolt_state=("${keep[@]}")
+    _state_save mru
+}
+
+# _state_mru NAME — NAME's mru epoch in REPLY, empty if never used.
+_state_mru() {
+    local l
+    REPLY=""
+    _state_load mru
+    for l in ${_jolt_state[@]+"${_jolt_state[@]}"}; do
+        if [[ $l == *$'\t'* && ${l#*$'\t'} == "$1" ]]; then
+            REPLY=${l%%$'\t'*}
+            return 0
+        fi
+    done
+}
+
+state_mru() {
+    _state_mru "$1"
+    [[ -z $REPLY ]] || printf '%s\n' "$REPLY"
+}
+
+# _last_used NAME — epoch NAME was last used, in REPLY: mru entry, else the
+# mtime of its cache dir, else 0.
+_last_used() {
+    local d="$JOLT_CACHE_DIR/$1" m=""
+    _state_mru "$1"
+    [[ -n $REPLY ]] && return 0
+    if [[ -n $1 && -e $d ]]; then
+        m=$(stat -c %Y "$d" 2>/dev/null || stat -f %m "$d" 2>/dev/null) || m=""
+    fi
+    if [[ $m =~ ^[0-9]+$ ]]; then
+        REPLY=$m
+    else
+        REPLY=0
+    fi
+}
+
+last_used() {
+    _last_used "$1"
+    printf '%s\n' "$REPLY"
+}
+
+# pins_has NAME — succeeds when NAME is pinned (exact match).
+pins_has() {
+    local l
+    _state_load pins
+    for l in ${_jolt_state[@]+"${_jolt_state[@]}"}; do
+        [[ $l == "$1" ]] && return 0
+    done
+    return 1
+}
+
+# pins_toggle NAME — pin NAME, or unpin it if already pinned.
+pins_toggle() {
+    local name=$1 l found=""
+    local -a keep=()
+    _state_ok "$name" || return 1
+    _state_load pins
+    for l in ${_jolt_state[@]+"${_jolt_state[@]}"}; do
+        if [[ $l == "$name" ]]; then
+            found=1
+        else
+            keep+=("$l")
+        fi
+    done
+    [[ -n $found ]] || keep+=("$name")
+    _jolt_state=(${keep[@]+"${keep[@]}"})
+    _state_save pins
+}
+
+# _state_edit KIND OLD [NEW] — in state file KIND, replace the entry for
+# OLD with NEW (dropping any existing NEW entry), or remove it when NEW is
+# empty. The file is only rewritten when OLD was present.
+_state_edit() {
+    local kind=$1 old=$2 new=${3:-} l n epoch hit=""
+    local -a keep=()
+    _state_load "$kind"
+    for l in ${_jolt_state[@]+"${_jolt_state[@]}"}; do
+        n=$l
+        [[ $kind == mru ]] && n=${l#*$'\t'}
+        [[ $n == "$old" ]] && hit=1
+    done
+    [[ -n $hit ]] || return 0
+    for l in ${_jolt_state[@]+"${_jolt_state[@]}"}; do
+        n=$l
+        [[ $kind == mru ]] && n=${l#*$'\t'}
+        if [[ $n == "$old" ]]; then
+            [[ -n $new ]] || continue
+            if [[ $kind == mru ]]; then
+                epoch=${l%%$'\t'*}
+                keep+=("$epoch"$'\t'"$new")
+            else
+                keep+=("$new")
+            fi
+        elif [[ -z $new || $n != "$new" ]]; then
+            keep+=("$l")
+        fi
+    done
+    _jolt_state=(${keep[@]+"${keep[@]}"})
+    _state_save "$kind"
+}
+
+# state_rename OLD NEW — carry OLD's mru time and pin over to NEW.
+state_rename() {
+    _state_ok "$1" && _state_ok "$2" || return 1
+    [[ $1 == "$2" ]] && return 0
+    _state_edit mru "$1" "$2" && _state_edit pins "$1" "$2"
+}
+
+# state_forget NAME — drop NAME from mru and pins.
+state_forget() {
+    _state_ok "$1" || return 1
+    _state_edit mru "$1" && _state_edit pins "$1"
+}
+
+# _reltime EPOCH — compact age of EPOCH relative to now, in REPLY:
+# now, 5m, 3h, 2d, 4w, 3mo, 1y; "?" for 0/empty/invalid.
+_reltime() {
+    local t=${1:-} d
+    if [[ ! $t =~ ^[0-9]+$ ]] || ((10#$t == 0)); then
+        REPLY='?'
+        return 0
+    fi
+    _jolt_now
+    d=$((REPLY - 10#$t))
+    if ((d < 60)); then
+        REPLY=now
+    elif ((d < 3600)); then
+        REPLY="$((d / 60))m"
+    elif ((d < 86400)); then
+        REPLY="$((d / 3600))h"
+    elif ((d < 7 * 86400)); then
+        REPLY="$((d / 86400))d"
+    elif ((d < 30 * 86400)); then
+        REPLY="$((d / (7 * 86400)))w"
+    elif ((d < 365 * 86400)); then
+        REPLY="$((d / (30 * 86400)))mo"
+    else
+        REPLY="$((d / (365 * 86400)))y"
+    fi
+}
+
+reltime() {
+    _reltime "${1:-}"
+    printf '%s\n' "$REPLY"
+}
 
 # ── render ──────────────────────────────────────────────────────────────
 
