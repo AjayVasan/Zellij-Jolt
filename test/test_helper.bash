@@ -29,6 +29,7 @@ jolt_setup() {
   export PATH
 
   cp -r "$REPO/test/fixtures/session_info/." "$JOLT_CACHE_DIR/"
+  chmod -R u+w "$JOLT_CACHE_DIR"
 
   unset ZELLIJ ZELLIJ_SESSION_NAME NO_COLOR
 }

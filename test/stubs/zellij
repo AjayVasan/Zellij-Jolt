@@ -20,6 +20,22 @@ _stub_ls_present() {
   [ -n "${STUB_LS:-}" ] && [ -s "$STUB_LS" ]
 }
 
+# Echo the first positional (non-flag) argument, e.g. the session name in
+# `kill-session -f NAME` or `delete-session NAME -y`. Flags (anything
+# starting with -) are skipped; the first match wins.
+_first_positional() {
+  for a in "$@"; do
+    case "$a" in
+    -*) ;;
+    *)
+      printf '%s\n' "$a"
+      return 0
+      ;;
+    esac
+  done
+  return 1
+}
+
 case "$cmd" in
 list-sessions | ls)
   mode=""
@@ -45,13 +61,7 @@ list-sessions | ls)
   exit 0
   ;;
 kill-session)
-  target=""
-  for a in "$@"; do
-    case "$a" in
-    -*) ;;
-    *) target="$a" ;;
-    esac
-  done
+  target="$(_first_positional "$@")"
   if _stub_ls_present && grep -qF "$target" "$STUB_LS"; then
     exit 0
   fi
@@ -59,13 +69,7 @@ kill-session)
   exit 1
   ;;
 delete-session)
-  target=""
-  for a in "$@"; do
-    case "$a" in
-    -*) ;;
-    *) target="$a" ;;
-    esac
-  done
+  target="$(_first_positional "$@")"
   if _stub_ls_present && grep -qF "$target" "$STUB_LS"; then
     exit 0
   fi
