@@ -716,6 +716,9 @@ sessions_read() {
     while IFS= read -r line; do
         line=${line%$'\r'}
         [[ $line =~ $re ]] || continue
+        # A TAB in the name would break this TSV record and the
+        # TAB-delimited picker rows.
+        [[ ${BASH_REMATCH[1]} == *$'\t'* ]] && continue
         case ${BASH_REMATCH[4]} in
             current) st=current ;;
             EXITED*) st=exited ;;
@@ -1072,47 +1075,50 @@ _dwidth() {
 }
 
 # _trunc STR W — STR cut to display width <= W in REPLY, ending in "…"
-# ("~" without UTF-8) when cut.
+# ("~" without UTF-8) when cut. Also sets _jolt_tw to REPLY's display
+# width. Single pass that stops as soon as STR is known not to fit, so
+# long titles cost O(W), not O(length).
 _trunc() {
-    local s="$1" max="$2" i c ch w=0 out=""
-    if [[ $JOLT_UTF8 != 1 ]]; then
-        s=${s//[![:ascii:]]/?}
+    local s="$1" max="$2" i c w=0 cut=-1 cutw=0
+    if [[ $JOLT_UTF8 != 1 || $s != *[![:ascii:]]* ]]; then
+        [[ $JOLT_UTF8 != 1 ]] && s=${s//[![:ascii:]]/?}
         if ((${#s} <= max)); then
             REPLY=$s
         elif ((max <= 0)); then
             REPLY=""
-        else
+        elif [[ $JOLT_UTF8 != 1 ]]; then
             REPLY="${s:0:max-1}~"
+        else
+            REPLY="${s:0:max-1}…"
         fi
-        return
-    fi
-    _dwidth "$s"
-    if ((REPLY <= max)); then
-        REPLY=$s
-        return
-    fi
-    if ((max <= 0)); then
-        REPLY=""
+        _jolt_tw=${#REPLY}
         return
     fi
     for ((i = 0; i < ${#s}; i++)); do
-        ch=${s:i:1}
-        printf -v c '%d' "'$ch"
+        printf -v c '%d' "'${s:i:1}"
         _char_width "$c"
-        ((w + REPLY > max - 1)) && break
         w=$((w + REPLY))
-        out+=$ch
+        # chars [0,i) are the longest prefix that leaves room for "…"
+        ((cut < 0 && w > max - 1)) && cut=$i cutw=$((w - REPLY))
+        ((w > max)) && break
     done
-    REPLY="$out…"
+    if ((w <= max)); then
+        REPLY=$s
+        _jolt_tw=$w
+    elif ((max <= 0)); then
+        REPLY=""
+        _jolt_tw=0
+    else
+        REPLY="${s:0:cut}…"
+        _jolt_tw=$((cutw + 1))
+    fi
 }
 
 # _pad STR W — _trunc STR to W, right-padded with spaces to W, in REPLY.
 _pad() {
-    local t w="$2"
+    local w="$2"
     _trunc "$1" "$w"
-    t=$REPLY
-    _dwidth "$t"
-    printf -v REPLY '%s%*s' "$t" $((w > REPLY ? w - REPLY : 0)) ""
+    printf -v REPLY '%s%*s' "$REPLY" $((w > _jolt_tw ? w - _jolt_tw : 0)) ""
 }
 
 dwidth() {
@@ -1128,6 +1134,371 @@ trunc() {
 pad() {
     _pad "$1" "$2"
     printf '%s\n' "$REPLY"
+}
+
+# _render_colors_init — make sure every C_* color is set (empty when the
+# caller provided only some of them), so render code can use them under
+# `set -u`.
+_render_colors_init() {
+    : "${C_RESET:=}" "${C_DIM:=}" "${C_BOLD:=}" "${C_ACCENT:=}" "${C_OK:=}"
+    : "${C_WARN:=}" "${C_MUTED:=}" "${C_TITLE:=}" "${C_ITA:=}"
+}
+
+# render_theme — theme_load, unless the picker already exported the result
+# (JOLT_THEME_DESC set): fzf runs --list/--preview on every reload and
+# cursor move, and parsing the zellij config each time costs ~40ms.
+render_theme() {
+    if [[ -n ${JOLT_THEME_DESC:-} ]]; then
+        _render_colors_init
+    else
+        theme_load
+    fi
+}
+
+# _rule N — N box-drawing "─" characters in REPLY.
+_rule() {
+    printf -v REPLY '%*s' "$1" ""
+    REPLY=${REPLY// /─}
+}
+
+# _tab_count NAME — number of tabs in NAME's cached metadata, in REPLY
+# (0 and return 1 without a cache). Same block rules as meta_read, but
+# stops once the top-level tabs block closes: --list needs only the count.
+_tab_count() {
+    local f="$JOLT_CACHE_DIR/$1/session-metadata.kdl" line depth=0 top="" n=0
+    REPLY=0
+    [[ -n $1 && -f $f && -r $f ]] || return 1
+    while IFS= read -r line || [[ -n $line ]]; do
+        line=${line%$'\r'}
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        if [[ $line == *'{' ]]; then
+            depth=$((depth + 1))
+            if ((depth == 1)); then
+                top=${line%%[[:space:]\{]*}
+            elif ((depth == 2)) && [[ $top == tabs && ${line%%[[:space:]\{]*} == tab ]]; then
+                n=$((n + 1))
+            fi
+        elif [[ $line == '}' ]]; then
+            ((depth > 0)) && depth=$((depth - 1))
+            ((depth == 0)) && [[ $top == tabs ]] && break
+        fi
+    done <"$f"
+    REPLY=$n
+}
+
+# rows_build — picker rows KEY<TAB>DISPLAY on stdout: the three action rows
+# (a:new, a:project, a:layout), then sessions (s:NAME) ordered pinned,
+# active, exited (hidden when SHOW_EXITED=off unless pinned), each newest
+# last-used first, and the current session last. DISPLAY is
+#   <★|space> <glyph> <name padded to min(longest,28)>  <age padded 4>  <info>
+# with glyphs ● active / ○ exited / ◆ current always backed by text
+# ("N tabs", "resurrect", "(current)") for NO_COLOR.
+# Hot path (every fzf reload): state files are read once, cache dir
+# mtimes come from a single stat call, and there are no per-row subshells.
+rows_build() {
+    local -A mru=() pinned=() mtime=()
+    local -a names=() stats=() epochs=() groups=() order=() dirs=()
+    local l name st t g i j k maxw=0 w out="" pin glyph info dname stat_out
+    _render_colors_init
+
+    _state_load mru
+    for l in ${_jolt_state[@]+"${_jolt_state[@]}"}; do
+        [[ $l == *$'\t'* ]] || continue
+        name=${l#*$'\t'}
+        t=${l%%$'\t'*}
+        [[ -n $name && $t =~ ^[0-9]+$ && -z ${mru[$name]+x} ]] && mru[$name]=$((10#$t))
+    done
+    _state_load pins
+    for l in ${_jolt_state[@]+"${_jolt_state[@]}"}; do
+        [[ -n $l ]] && pinned[$l]=1
+    done
+
+    while IFS=$'\t' read -r name st t; do
+        [[ -n $name ]] || continue
+        names+=("$name")
+        stats+=("$st")
+        if [[ -z ${mru[$name]+x} && -n $JOLT_CACHE_DIR && -e $JOLT_CACHE_DIR/$name ]]; then
+            dirs+=("$JOLT_CACHE_DIR/$name")
+        fi
+    done < <(sessions_read)
+
+    # Fallback last-used time: cache dir mtime (GNU stat, else BSD stat).
+    if ((${#dirs[@]})); then
+        stat_out=$(stat -c $'%Y\t%n' -- "${dirs[@]}" 2>/dev/null)
+        [[ -n $stat_out ]] || stat_out=$(stat -f $'%m\t%N' -- "${dirs[@]}" 2>/dev/null)
+        while IFS= read -r l; do
+            t=${l%%$'\t'*}
+            name=${l#*$'\t'}
+            name=${name#"$JOLT_CACHE_DIR/"}
+            [[ $t =~ ^[0-9]+$ ]] && mtime[$name]=$t
+        done <<<"$stat_out"
+    fi
+
+    # Group, then insertion-sort by (group asc, last used desc, ls order).
+    for ((i = 0; i < ${#names[@]}; i++)); do
+        name=${names[i]}
+        st=${stats[i]}
+        t=${mru[$name]:-${mtime[$name]:-0}}
+        if [[ $st == current ]]; then
+            g=3
+        elif [[ -n ${pinned[$name]+x} ]]; then
+            g=0
+        elif [[ $st == active ]]; then
+            g=1
+        else
+            [[ ${CFG_SHOW_EXITED:-on} == off ]] && continue
+            g=2
+        fi
+        groups[i]=$g
+        epochs[i]=$t
+        j=${#order[@]}
+        while ((j > 0)); do
+            k=${order[j - 1]}
+            ((groups[k] > g || (groups[k] == g && epochs[k] < t))) || break
+            order[j]=$k
+            j=$((j - 1))
+        done
+        order[j]=$i
+        dname=${name//[[:cntrl:]]/?}
+        _dwidth "$dname"
+        ((REPLY > maxw)) && maxw=$REPLY
+    done
+    w=$((maxw < 28 ? maxw : 28))
+
+    out+="a:new"$'\t'"${C_MUTED}+ ${C_ITA}new session${C_RESET}"$'\n'
+    out+="a:project"$'\t'"${C_MUTED}◇ ${C_ITA}project…${C_RESET}"$'\n'
+    out+="a:layout"$'\t'"${C_MUTED}▦ ${C_ITA}new from layout…${C_RESET}"$'\n'
+    for i in ${order[@]+"${order[@]}"}; do
+        name=${names[i]}
+        pin=" "
+        [[ -n ${pinned[$name]+x} ]] && pin="${C_WARN}★${C_RESET}"
+        case ${stats[i]} in
+            current)
+                glyph="${C_ACCENT}◆${C_RESET}"
+                info="(current)"
+                ;;
+            exited)
+                glyph="${C_MUTED}○${C_RESET}"
+                info=resurrect
+                ;;
+            *)
+                glyph="${C_OK}●${C_RESET}"
+                info=""
+                if _tab_count "$name"; then
+                    info="$REPLY tabs"
+                    ((REPLY == 1)) && info="1 tab"
+                fi
+                ;;
+        esac
+        _pad "${name//[[:cntrl:]]/?}" "$w"
+        dname=$REPLY
+        _reltime "${epochs[i]}"
+        _pad "$REPLY" 4
+        out+="s:$name"$'\t'"$pin $glyph $dname  ${C_MUTED}$REPLY  $info${C_RESET}"$'\n'
+    done
+    printf '%s' "$out"
+}
+
+# Preview box helpers. They append to _pv_out using the outer width _pv_w,
+# both locals of preview_render (dynamic scope). Every content line is
+# "│ " + text padded to _pv_w-4 + " │", so all lines share one display
+# width regardless of wide or multibyte characters.
+
+# _pv_edge LEFT RIGHT [TITLE] — a horizontal edge, TITLE inset after "─ ".
+_pv_edge() {
+    local t=${3:-}
+    if [[ -n $t ]]; then
+        _trunc "${t//[[:cntrl:]]/?}" $((_pv_w - 6))
+        t=$REPLY
+        _dwidth "$t"
+        _rule $((_pv_w - 5 - REPLY))
+        _pv_out+="${C_ACCENT}$1─ ${C_RESET}${C_TITLE}$t${C_RESET}${C_ACCENT} $REPLY$2${C_RESET}"$'\n'
+    else
+        _rule $((_pv_w - 2))
+        _pv_out+="${C_ACCENT}$1$REPLY$2${C_RESET}"$'\n'
+    fi
+}
+
+# _pv_row PREFIX TEXT [PREFIX_COLOR [TEXT_COLOR]] — one content line.
+# PREFIX must be narrower than the inner width (labels, tree glyphs).
+_pv_row() {
+    local p=$1 pc=${3:-} tc=${4:-} pw
+    _dwidth "$p"
+    pw=$REPLY
+    _pad "${2//[[:cntrl:]]/ }" $((_pv_w - 4 - pw))
+    _pv_out+="${C_ACCENT}│${C_RESET} $pc$p${pc:+$C_RESET}$tc$REPLY${tc:+$C_RESET} ${C_ACCENT}│${C_RESET}"$'\n'
+}
+
+# _pv_kv LABEL VALUE [VALUE_COLOR] — "label     value" header row.
+_pv_kv() {
+    local l
+    printf -v l '%-10s' "$1"
+    _pv_row "$l" "$2" "$C_MUTED" "${3:-}"
+}
+
+# _pv_wrap TEXT [COLOR] — TEXT word-wrapped over as many rows as needed.
+_pv_wrap() {
+    local inner=$((_pv_w - 4)) word line="" lw=0 ww
+    local -a words=()
+    read -r -a words <<<"$1"
+    for word in ${words[@]+"${words[@]}"}; do
+        _dwidth "$word"
+        ww=$REPLY
+        if [[ -z $line ]]; then
+            line=$word lw=$ww
+        elif ((lw + 1 + ww > inner)); then
+            _pv_row "" "$line" "" "${2:-}"
+            line=$word lw=$ww
+        else
+            line+=" $word"
+            lw=$((lw + 1 + ww))
+        fi
+    done
+    [[ -z $line ]] || _pv_row "" "$line" "" "${2:-}"
+}
+
+# _pv_session NAME — header (status, created, last used, pinned, cwd), then
+# the cached tabs (1-based, ▸ active) with up to 3 deduped panes each.
+_pv_session() {
+    local name=$1 n s a st="" age="" t cwd h meta l kind b c text pos
+    local -a tnames=() tact=()
+    local -A seen=() plist=() pcount=()
+
+    while IFS=$'\t' read -r n s a; do
+        if [[ $n == "$name" ]]; then
+            st=$s age=$a
+            break
+        fi
+    done < <(sessions_read)
+    _pv_edge ╭ ╮ "${name:-?}"
+    if [[ -z $name || -z $st ]]; then
+        _pv_row "" "session not found" "" "$C_WARN"
+        _pv_edge ╰ ╯
+        return 0
+    fi
+
+    case $st in
+        current) _pv_kv status "◆ current" "$C_ACCENT" ;;
+        exited) _pv_kv status "○ exited" "$C_MUTED" ;;
+        *) _pv_kv status "● active" "$C_OK" ;;
+    esac
+    _pv_kv created "$age ago"
+    _last_used "$name"
+    _reltime "$REPLY"
+    t=$REPLY
+    [[ $t == now || $t == '?' ]] || t+=" ago"
+    _pv_kv "last used" "$t"
+    pins_has "$name" && _pv_kv pinned yes "$C_WARN"
+    cwd=$(layout_cwd "$name")
+    if [[ -n $cwd ]]; then
+        h=${HOME:-}
+        h=${h%/}
+        if [[ -n $h ]]; then
+            # A literal ~ is the point here (display only).
+            if [[ $cwd == "$h" ]]; then
+                # shellcheck disable=SC2088
+                cwd="~"
+            elif [[ $cwd == "$h"/* ]]; then
+                # shellcheck disable=SC2088
+                cwd="~/${cwd#"$h"/}"
+            fi
+        fi
+        _pv_kv cwd "$cwd"
+    fi
+    _pv_edge ├ ┤
+
+    if ! meta=$(meta_read "$name"); then
+        _pv_row "" "no cached layout yet" "" "$C_MUTED"
+        _pv_edge ╰ ╯
+        return 0
+    fi
+    # Records: tab POS ACTIVE NAME / pane TAB TITLE CMD (fields may be
+    # empty, so split by hand rather than with IFS=TAB read).
+    while IFS= read -r l; do
+        [[ $l == *$'\t'*$'\t'*$'\t'* ]] || continue
+        kind=${l%%$'\t'*}
+        l=${l#*$'\t'}
+        a=${l%%$'\t'*}
+        l=${l#*$'\t'}
+        b=${l%%$'\t'*}
+        c=${l#*$'\t'}
+        [[ $a =~ ^[0-9]+$ ]] || continue
+        a=$((10#$a))
+        if [[ $kind == tab ]]; then
+            tnames[a]=$c
+            tact[a]=$b
+            continue
+        fi
+        text=${b:-$c}
+        [[ -n $c && $c != "$b" && -n $b ]] && text+=" — $c"
+        [[ -n ${seen[$a$'\x1f'$text]+x} ]] && continue
+        seen[$a$'\x1f'$text]=1
+        pcount[$a]=$((${pcount[$a]:-0} + 1))
+        ((${pcount[$a]} <= 3)) && plist[$a]+="$text"$'\x1e'
+    done <<<"$meta"
+
+    n=0
+    for pos in ${tnames[@]+"${!tnames[@]}"}; do
+        n=$((n + 1))
+        if [[ ${tact[pos]:-} == true ]]; then
+            _pv_row "▸ " "$n. ${tnames[pos]}" "$C_ACCENT" "$C_BOLD"
+        else
+            _pv_row "  " "$n. ${tnames[pos]}"
+        fi
+        l=${plist[$pos]:-}
+        while [[ -n $l ]]; do
+            _pv_row "    └ " "${l%%$'\x1e'*}" "$C_MUTED"
+            l=${l#*$'\x1e'}
+        done
+        c=${pcount[$pos]:-0}
+        ((c > 3)) && _pv_row "    └ " "+$((c - 3)) more" "$C_MUTED" "$C_MUTED"
+    done
+    ((n)) || _pv_row "" "no tabs cached" "" "$C_MUTED"
+    _pv_edge ╰ ╯
+}
+
+# preview_render KEY — the fzf preview for a row key, as a box exactly
+# ${FZF_PREVIEW_COLUMNS:-60}-2 columns wide (min 20): session details for
+# s:NAME, short help for a:new / a:project / a:layout.
+preview_render() {
+    local key=${1:-} cols=${FZF_PREVIEW_COLUMNS:-60} _pv_w _pv_out=""
+    _render_colors_init
+    [[ $cols =~ ^[0-9]{1,4}$ ]] || cols=60
+    _pv_w=$((10#$cols - 2))
+    ((_pv_w < 20)) && _pv_w=20
+    case $key in
+        s:*)
+            _pv_session "${key#s:}"
+            ;;
+        a:new)
+            _pv_edge ╭ ╮ "new session"
+            _pv_wrap "Create a session named after the query: type a name and press enter. ${CFG_KEY_CREATE:-alt-enter} creates from the query even when it matches a row."
+            _pv_row "" ""
+            _pv_wrap "Inside zellij this switches to the new session; outside it attaches to it." "$C_MUTED"
+            _pv_edge ╰ ╯
+            ;;
+        a:project)
+            _pv_edge ╭ ╮ "project"
+            _pv_wrap "Open a project directory as a session (${CFG_KEY_PROJECT:-ctrl-o})."
+            _pv_row "" ""
+            _pv_wrap "Candidates come from zoxide, else git repositories under PROJECT_ROOTS. A session already named after the project is reused." "$C_MUTED"
+            _pv_edge ╰ ╯
+            ;;
+        a:layout)
+            _pv_edge ╭ ╮ "layout"
+            _pv_wrap "Start a new session from a layout (${CFG_KEY_LAYOUT:-ctrl-l}), then name it."
+            _pv_row "" ""
+            _pv_wrap "Lists your layouts in ~/.config/zellij/layouts plus the built-ins default, compact, classic and strider." "$C_MUTED"
+            _pv_edge ╰ ╯
+            ;;
+        *)
+            _pv_edge ╭ ╮ "zellij-jolt"
+            _pv_row "" "nothing to preview" "" "$C_MUTED"
+            _pv_edge ╰ ╯
+            ;;
+    esac
+    printf '%s' "$_pv_out"
 }
 
 # ── actions ─────────────────────────────────────────────────────────────
@@ -1237,11 +1608,15 @@ main() {
             usage
             ;;
         --list)
-            die "not implemented"
+            config_load
+            render_theme
+            rows_build
             ;;
         --preview)
             (($# >= 2)) || _usage_error "--preview needs a KEY"
-            die "not implemented"
+            config_load
+            render_theme
+            preview_render "$2"
             ;;
         --action)
             (($# >= 3)) || _usage_error "--action needs ACT and KEY"
