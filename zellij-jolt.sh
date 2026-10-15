@@ -26,6 +26,7 @@ if [ "$_jolt_bmaj" -lt 4 ] || { [ "$_jolt_bmaj" -eq 4 ] && [ "$_jolt_bmin" -lt 2
         esac
     fi
     # return when sourced, exit when executed
+    # shellcheck disable=SC2317  # reached only when executed (return fails outside a function/source)
     return 1 2>/dev/null || exit 1
 fi
 unset _jolt_bmaj _jolt_bmin
@@ -152,6 +153,7 @@ fallback_shell() {
         esac
         # execfail: a failed exec returns instead of killing the script.
         shopt -s execfail
+        # shellcheck disable=SC2093  # execfail is set: a failed exec falls through to the next line
         exec "$sh" -l
         exec /bin/sh -l
     fi
@@ -334,9 +336,10 @@ _key_clash() {
 # _cfg_expand_tilde VALUE — leading "~" or "~/" → $HOME.
 _cfg_expand_tilde() {
     local v="$1"
+    # shellcheck disable=SC2088  # matching a literal ~ prefix, not expanding it
     if [[ $v == "~" ]]; then
         v=$HOME
-    elif [[ $v == "~/"* ]]; then
+        elif [[ $v == "~/"* ]]; then
         v="$HOME/${v#\~/}"
     fi
     printf '%s' "$v"
@@ -429,6 +432,7 @@ _th_clean() {
     # strings but no /*: walk "-delimited segments (escapes parked in
     # \x02 \x03), padding only the unquoted ones — no per-char loop
     if [[ $s != *'/*'* ]]; then
+        # shellcheck disable=SC1003  # '\\' is a literal two-backslash pattern, not an escape attempt
         s=${s//'\\'/$'\x02'}
         s=${s//'\"'/$'\x03'}
         while :; do
@@ -445,6 +449,7 @@ _th_clean() {
             s=${s#*\"}
             q=$((1 - q))
         done
+        # shellcheck disable=SC1003  # '\\' is a literal two-backslash replacement
         out=${out//$'\x02'/'\\'}
         REPLY=${out//$'\x03'/'\"'}
         return 0
@@ -454,6 +459,7 @@ _th_clean() {
         c=${s:i:1}
         if ((q)); then
             out+=$c
+            # shellcheck disable=SC1003  # '\' is a literal single backslash
             if [[ $c == '\' ]]; then
                 out+=${s:i+1:1}
                 i=$((i + 1))
@@ -540,8 +546,8 @@ _th_stmt() {
         _th_fmt[$name]=${_th_fmt[$name]:-legacy}
     else
         case ${_th_stack[2]}:$key in
-            text_unselected:base) role=fg ;;
-            text_unselected:background) role=bg ;;
+            text_unselected:base) role='fg' ;;
+            text_unselected:background) role='bg' ;;
             frame_selected:base) role=accent ;;
             ribbon_selected:background) role=accent2 ;;
             exit_code_error:base) role=red ;;
@@ -668,9 +674,10 @@ theme_load() {
     [[ $mode != auto ]] && name=$mode
     if [[ -n $name && -z ${_th_fmt[$name]:-} ]]; then
         dir=${_th_cfg_dir:-${JOLT_ZELLIJ_CONFIG%/*}/themes}
+        # shellcheck disable=SC2088  # matching a literal ~ prefix, not expanding it
         if [[ $dir == "~" ]]; then
             dir=$HOME
-        elif [[ $dir == "~/"* ]]; then
+                elif [[ $dir == "~/"* ]]; then
             dir="$HOME/${dir#\~/}"
         fi
         set +f
@@ -685,7 +692,11 @@ theme_load() {
             fi
         done
     fi
-    ((noglob)) && set -f || set +f
+    if ((noglob)); then
+        set -f
+    else
+        set +f
+    fi
 
     if [[ -z $name ]]; then
         _th_set_default
@@ -779,6 +790,7 @@ _trim_line() {
 # dropped, \" and \\ unescaped, \n \t \r and raw control chars → space so
 # the result is always safe inside one TSV field.
 _kdl_str() {
+    # shellcheck disable=SC1003  # '\' is a literal single backslash
     local s=$1 bs='\'
     s=${s#\"}
     s=${s%\"}
@@ -1111,23 +1123,23 @@ reltime() {
 # (0 combining / zero-width / variation selector, 2 East Asian wide or
 # emoji, 1 otherwise).
 _char_width() {
-    local c=$1
-    if ((c >= 0x0300 && c <= 0x036F)) ||
-        ((c >= 0x200B && c <= 0x200F)) ||
-        ((c >= 0x20D0 && c <= 0x20FF)) ||
-        ((c >= 0xFE00 && c <= 0xFE0F)); then
+    local cp=$1
+    if ((cp >= 0x0300 && cp <= 0x036F)) ||
+        ((cp >= 0x200B && cp <= 0x200F)) ||
+        ((cp >= 0x20D0 && cp <= 0x20FF)) ||
+        ((cp >= 0xFE00 && cp <= 0xFE0F)); then
         REPLY=0
-    elif ((c >= 0x1100 && c <= 0x115F)) ||
-        ((c >= 0x2E80 && c <= 0xA4CF)) ||
-        ((c >= 0xAC00 && c <= 0xD7A3)) ||
-        ((c >= 0xF900 && c <= 0xFAFF)) ||
-        ((c >= 0xFE30 && c <= 0xFE4F)) ||
-        ((c >= 0xFF00 && c <= 0xFF60)) ||
-        ((c >= 0xFFE0 && c <= 0xFFE6)) ||
-        ((c >= 0x1F300 && c <= 0x1F64F)) ||
-        ((c >= 0x1F680 && c <= 0x1F6FF)) ||
-        ((c >= 0x1F900 && c <= 0x1F9FF)) ||
-        ((c >= 0x20000 && c <= 0x3FFFD)); then
+    elif ((cp >= 0x1100 && cp <= 0x115F)) ||
+        ((cp >= 0x2E80 && cp <= 0xA4CF)) ||
+        ((cp >= 0xAC00 && cp <= 0xD7A3)) ||
+        ((cp >= 0xF900 && cp <= 0xFAFF)) ||
+        ((cp >= 0xFE30 && cp <= 0xFE4F)) ||
+        ((cp >= 0xFF00 && cp <= 0xFF60)) ||
+        ((cp >= 0xFFE0 && cp <= 0xFFE6)) ||
+        ((cp >= 0x1F300 && cp <= 0x1F64F)) ||
+        ((cp >= 0x1F680 && cp <= 0x1F6FF)) ||
+        ((cp >= 0x1F900 && cp <= 0x1F9FF)) ||
+        ((cp >= 0x20000 && cp <= 0x3FFFD)); then
         REPLY=2
     else
         REPLY=1
@@ -1656,6 +1668,7 @@ run_or_exec() {
     fi
     # execfail: a failed exec returns here instead of killing the script.
     shopt -s execfail
+    # shellcheck disable=SC2093  # execfail is set: a failed exec falls through to die
     exec "$@"
     die "cannot run $1"
 }
@@ -2202,9 +2215,10 @@ zellij_layout_dir() {
     _th_scan "${JOLT_ZELLIJ_CONFIG:-}"
     ((noglob)) || set +f
     d=$_th_cfg_ldir
+    # shellcheck disable=SC2088  # matching a literal ~ prefix, not expanding it
     if [[ $d == "~" ]]; then
         d=$HOME
-    elif [[ $d == "~/"* ]]; then
+        elif [[ $d == "~/"* ]]; then
         d="$HOME/${d#\~/}"
     elif [[ -n $d && $d != /* ]]; then
         d="${JOLT_ZELLIJ_CONFIG%/*}/$d"
