@@ -1,42 +1,80 @@
-# Zellij-Jolt
+<div align="center">
 
-**A fast, keyboard-first fuzzy picker for Zellij sessions.**
+# ⚡ Zellij-Jolt
 
-Zellij-Jolt replaces your terminal's shell with an `fzf`-powered picker: fuzzy-find and attach to any session, jump straight into a project directory, spin up a session from a layout, rename/pin/delete, and resurrect exited sessions — all from one screen, with a live preview of what's actually running in each session. It reads Zellij's own on-disk session cache and never touches a session except through the actions you trigger.
+**Jolt into your Zellij sessions — fuzzy picker, live preview, instant attach.**
 
+[![Version](https://img.shields.io/badge/version-2.0.0-73d936?style=flat-square)](https://github.com/AjayVasan/Zellij-Jolt/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-ffdd33?style=flat-square)](LICENSE)
+[![Bash](https://img.shields.io/badge/bash-%E2%89%A54.2-4eaa25?style=flat-square&logo=gnubash&logoColor=white)](#requirements)
+[![Zellij](https://img.shields.io/badge/zellij-%E2%89%A50.39-f97316?style=flat-square)](https://zellij.dev)
+[![fzf](https://img.shields.io/badge/fzf-%E2%89%A50.38-96a6c8?style=flat-square)](https://github.com/junegunn/fzf)
+[![Tests](https://img.shields.io/badge/tests-220%20passing-73d936?style=flat-square)](test/)
+[![ShellCheck](https://img.shields.io/badge/shellcheck-clean-73d936?style=flat-square)](https://www.shellcheck.net)
+
+<img src="docs/assets/demo.gif" alt="Zellij-Jolt demo: browsing sessions with live preview, fuzzy filtering, key help and the project picker" width="900">
+
+</div>
+
+Zellij-Jolt turns your terminal into a keyboard-first launcher for [Zellij](https://zellij.dev). Open a terminal, and an `fzf` picker lists every session: pinned, active and exited. A live preview shows each session's tabs and running commands. From that one screen you can attach, create, rename, pin, delete, resurrect, or open a project or layout.
+
+It's a **single bash script** with no daemon and no plugin. It reads Zellij's own session cache and only changes a session when you press a key.
+
+## Quick start
+
+```bash
+git clone https://github.com/AjayVasan/Zellij-Jolt && cd Zellij-Jolt && ./install.sh
+zellij-jolt
 ```
-  + new session
-  ◇ project…
-  ▦ new from layout…
-★ ● api-server      2h   3 tabs        ╭─ api-server ───────────────╮
-  ● scratch        12m   1 tab         │ status      ● active       │
-  ◆ notes           5m   (current)     │ created     2h ago         │
-  ○ old-demo         3d  resurrect     │ last used   2h ago         │
-                                        │ pinned      yes            │
-                                        │ cwd         ~/code/api     │
-                                        ├─────────────────────────────┤
-                                        │▸ 1. server                 │
-                                        │    nvim src/main.rs        │
-                                        │    cargo watch -x run      │
-                                        │  2. logs                   │
-                                        ╰─────────────────────────────╯
-> _
-```
 
-`★` pinned · `●` active · `○` exited (resurrect) · `◆` current session.
+Then make it your terminal's shell or bind it inside Zellij. See [Setup](#setup).
 
 ## Features
 
-- Unified picker — actions, pinned/active/exited sessions, and the current session all in one fuzzy list, ordered pinned → active → exited → current.
-- Live preview — tabs (▸ marks the active one), deduped panes with their running command, created/last-used time, cwd, pin state.
-- Project sessions — pick a project directory from `zoxide`, or a scan for git repositories under configured roots (`fd`/`find`), and jump straight into a session for it.
-- Layout sessions — start a new session from any `*.kdl` layout, including Zellij's built-ins.
-- Session actions from the picker: delete/kill, purge all exited, rename, pin/unpin.
-- MRU + pins persisted across restarts; typed names that don't match anything create a new session.
-- In-session switching — run it from inside Zellij and it uses `switch-session` instead of nesting.
-- Renders in your Zellij theme's colors automatically (or no color at all under `NO_COLOR`).
-- Guarded auto-start snippet for bash/zsh/fish, so a new terminal window drops you straight into the picker.
-- `--doctor` for environment diagnostics; `--dry-run` to see the exact command without running it.
+| | |
+|---|---|
+| 🔎 **One fuzzy list** | Actions, pinned, active and exited sessions in one picker, ordered pinned → active → exited → current. Type a name that doesn't exist to create it. |
+| 👁️ **Live preview** | Status, age, last used, cwd, and every tab with its panes' running commands (`▸` marks the active tab). |
+| ♻️ **Resurrect** | Exited sessions stay in the list with their saved layout. Pick one to bring it back. |
+| 📁 **Projects** | `ctrl-o` jumps into a git repo from `zoxide` or a scan of your project roots, with a branch and file preview. |
+| 🧩 **Layouts** | `ctrl-l` starts a session from any `*.kdl` layout, including Zellij's built-ins. |
+| ⌨️ **Session actions** | Delete, purge exited, rename and pin/unpin without leaving the picker. All keys are configurable. |
+| 🎨 **Theme-aware** | Uses your Zellij theme's colors automatically. Respects `NO_COLOR`. |
+| 🔀 **In-session switching** | Inside Zellij it uses `switch-session` instead of nesting. Bind it to `Alt s` as a floating pane. |
+| 🩺 **Doctor & dry-run** | `--doctor` checks your environment. `--dry-run` prints the exact command it would run. |
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/picker.png" alt="Main picker with the live preview of a pinned, active session"></td>
+    <td width="50%"><img src="docs/assets/resurrect.png" alt="Preview of an exited session that can be resurrected"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Unified picker</b>: pinned ★, active ●, exited ○, with a live preview</td>
+    <td align="center"><b>Resurrect</b>: exited sessions keep their saved tabs and commands</td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/filter.png" alt="Fuzzy filtering the session list"></td>
+    <td><img src="docs/assets/help.png" alt="Key help shown in the preview pane"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Fuzzy filter</b>: type to narrow, or press enter to create</td>
+    <td align="center"><b>Built-in help</b>: press <code>?</code> for every key</td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/project.png" alt="Project picker with git branch and file preview"></td>
+    <td><img src="docs/assets/layout.png" alt="Layout picker listing custom and built-in layouts"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Project picker</b> (<code>ctrl-o</code>): git repos with a branch preview</td>
+    <td align="center"><b>New from layout</b> (<code>ctrl-l</code>): your layouts plus the built-ins</td>
+  </tr>
+</table>
+
+### Legend
+
+`★` pinned · `●` active · `○` exited (resurrect) · `◆` current session
 
 ## Requirements
 
@@ -222,10 +260,10 @@ Then remove any terminal config snippet or `--init-shell` line you added, and de
 
 ## Roadmap
 
-**M2 — Ship**: AUR (stable + `-git`), Homebrew tap, Nix package, curl installer, man page, shell completions, CI (Linux + macOS, shellcheck, shfmt), demo GIF, comparison table.
+**M2 — Ship**: AUR (stable + `-git`), Homebrew tap, Nix package, curl installer, man page, shell completions, CI (Linux + macOS, shellcheck, shfmt), comparison table.
 
 **M3 — Differentiators**: live `dump-screen` preview, SSH remote sessions, git worktree/branch sessions, AI-agent status column, session notes, doctor-reap of zombie sessions.
 
 ## License
 
-MIT
+[MIT](LICENSE) © Ajay Vasan
