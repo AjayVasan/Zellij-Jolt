@@ -7,8 +7,12 @@
 # script supports; detects which terminal emulators are present and
 # prints the exact config snippet for each, plus the --init-shell hint;
 # optionally (opt-in, never with --yes) registers a GNOME custom keyboard
-# shortcut. `--uninstall` removes the symlink and install dir only — it
-# never touches shell rc files, terminal config, or GNOME shortcuts.
+# shortcut. Also installs the bundled claude-zellij wrapper next to it and,
+# unless the rc already mentions claude-zellij, adds a guarded
+# `alias claude=claude-zellij` (inside Zellij only) to the shell rc
+# (--no-claude skips both). `--uninstall` removes the symlinks and install
+# dir only — it never touches shell rc files, terminal config, or GNOME
+# shortcuts.
 #
 # When sourced with JOLT_INSTALL_NO_MAIN=1, only defines functions (used
 # by test/install.bats to unit-test the GNOME duplicate-scan logic
@@ -18,6 +22,8 @@ set -uo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_NAME="zellij-jolt"
 SOURCE="$REPO_DIR/$SCRIPT_NAME.sh"
+CZ_NAME="claude-zellij"
+CZ_SOURCE="$REPO_DIR/$CZ_NAME.sh"
 INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zellij-jolt"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 
@@ -34,16 +40,18 @@ NC='\033[0m'
 
 YES=0
 NO_SHORTCUT=0
+NO_CLAUDE=0
 UNINSTALL=0
 
 # ── Small helpers ─────────────────────────────────────────────────────
 
 usage() {
     cat <<EOF
-Usage: install.sh [--yes] [--no-shortcut] [--uninstall] [--help]
+Usage: install.sh [--yes] [--no-shortcut] [--no-claude] [--uninstall] [--help]
 
   --yes           Non-interactive: accept every default, never prompt.
   --no-shortcut   Skip the GNOME keyboard-shortcut question entirely.
+  --no-claude     Don't install claude-zellij or its shell alias.
   --uninstall     Remove the installed script and symlink, then exit.
   --help          Show this help.
 
@@ -281,14 +289,134 @@ do_install() {
     echo ""
 }
 
+# ── claude-zellij ─────────────────────────────────────────────────────
+
+# install_claude_zellij — copy the bundled wrapper into INSTALL_DIR and
+# symlink it at BIN_DIR/claude-zellij. A different claude-zellij already
+# there (e.g. a hand-made one) is kept as claude-zellij.bak[.N] first; the
+# path itself stays the same, so panes Zellij saved with it still restore.
+install_claude_zellij() {
+    local link="${BIN_DIR}/${CZ_NAME}" target="${INSTALL_DIR}/${CZ_NAME}.sh" bak n=1
+    cp "$CZ_SOURCE" "$target" || install_fail "could not copy $CZ_SOURCE to $INSTALL_DIR"
+    chmod +x "$target" || install_fail "could not make $target executable"
+    if [[ -e $link || -L $link ]] && ! [[ $link -ef $target ]]; then
+        bak="${link}.bak"
+        while [[ -e $bak || -L $bak ]]; do
+            bak="${link}.bak.$n"
+            n=$((n + 1))
+        done
+        mv "$link" "$bak" || install_fail "could not back up $link"
+        echo -e "${YELLOW}Note:${NC} kept your previous ${CZ_NAME} as $bak"
+    fi
+    ln -sf "$target" "$link" || install_fail "could not create the symlink $link"
+    echo -e "${GREEN}✓${NC} Installed ${CZ_NAME} at $link"
+}
+
+# claude_rc_file — the rc file the claude alias goes in for $SHELL; returns
+# 1 for shells we don't handle.
+claude_rc_file() {
+    case "$(basename "${SHELL:-sh}")" in
+        zsh) printf '%s\n' "${ZDOTDIR:-$HOME}/.zshrc" ;;
+        bash) printf '%s\n' "$HOME/.bashrc" ;;
+        fish) printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/${CZ_NAME}.fish" ;;
+        *) return 1 ;;
+    esac
+}
+
+# claude_alias_snippet RC — the guarded alias block for RC's shell. It adds
+# no claude flags: claude-zellij passes on whatever you type.
+claude_alias_snippet() {
+    case "$1" in
+        *.fish)
+            cat <<'SNIP'
+# claude-zellij (zellij-jolt): inside Zellij, `claude` reopens its
+# conversation when Zellij restores the pane.
+if set -q ZELLIJ; and command -q claude-zellij
+    alias claude claude-zellij
+end
+SNIP
+            ;;
+        *)
+            cat <<'SNIP'
+# claude-zellij (zellij-jolt): inside Zellij, `claude` reopens its
+# conversation when Zellij restores the pane.
+if [[ -n ${ZELLIJ:-} ]] && command -v claude-zellij >/dev/null 2>&1; then
+    alias claude='claude-zellij'
+fi
+SNIP
+            ;;
+    esac
+}
+
+# have_claude — an executable claude on PATH. Not `command -v`: bash falls
+# back to a non-executable file, like the stub a broken npm install leaves.
+have_claude() {
+    local d ifs=$IFS
+    local -a dirs
+    IFS=: read -r -a dirs <<<"${PATH:-}"
+    IFS=$ifs
+    for d in ${dirs[@]+"${dirs[@]}"}; do
+        [[ -f ${d:-.}/claude && -x ${d:-.}/claude ]] && return 0
+    done
+    return 1
+}
+
+# setup_claude_alias — add the alias block to the shell rc, unless claude
+# isn't installed, the shell is unknown, or the rc (for fish: the conf.d
+# file or config.fish) already mentions claude-zellij — an existing setup
+# is left exactly as it is.
+setup_claude_alias() {
+    local rc ans f
+    local -a check
+    if ! have_claude; then
+        echo "claude not found — skipping the claude alias (re-run install.sh after installing Claude Code)."
+        return 0
+    fi
+    if ! rc="$(claude_rc_file)"; then
+        echo -e "${YELLOW}Note:${NC} unknown shell — inside Zellij, alias claude=claude-zellij yourself to use it."
+        return 0
+    fi
+    check=("$rc")
+    [[ $rc == *.fish ]] && check+=("${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish")
+    for f in "${check[@]}"; do
+        if [[ -f $f ]] && grep -q "$CZ_NAME" "$f" 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} claude alias already set up in $f — left unchanged"
+            return 0
+        fi
+    done
+    if [[ $YES -ne 1 ]]; then
+        read -rp "Inside Zellij, make 'claude' reopen its conversation after a restore (adds an alias to $rc)? [Y/n] " ans || ans="n"
+        [[ -z $ans || $ans =~ ^[Yy]$ ]] || return 0
+    fi
+    mkdir -p "$(dirname "$rc")" || install_fail "could not create $(dirname "$rc")"
+    {
+        [[ ! -s $rc ]] || echo ""
+        claude_alias_snippet "$rc"
+    } >>"$rc" || install_fail "could not write $rc"
+    echo -e "${GREEN}✓${NC} Added the claude alias to $rc (new shells pick it up)"
+}
+
+maybe_install_claude() {
+    [[ $NO_CLAUDE -eq 1 ]] && return 0
+    install_claude_zellij
+    setup_claude_alias
+    echo ""
+}
+
 do_uninstall() {
     print_header
     rm -f "${BIN_DIR}/${SCRIPT_NAME}"
+    # Only our own symlink: a hand-made claude-zellij is not ours to remove.
+    if [[ -L ${BIN_DIR}/${CZ_NAME} && ${BIN_DIR}/${CZ_NAME} -ef ${INSTALL_DIR}/${CZ_NAME}.sh ]]; then
+        rm -f "${BIN_DIR}/${CZ_NAME}"
+        echo -e "${GREEN}✓${NC} Removed ${BIN_DIR}/${CZ_NAME}"
+    fi
     rm -rf "$INSTALL_DIR"
     echo -e "${GREEN}✓${NC} Removed ${BIN_DIR}/${SCRIPT_NAME}"
     echo -e "${GREEN}✓${NC} Removed ${INSTALL_DIR}"
     echo ""
     echo "This did not touch:"
+    echo "  - the claude alias block in your shell rc (inert without claude-zellij)"
     echo "  - any shell rc auto-start snippet (zellij-jolt --init-shell)"
     echo "  - any terminal config (alacritty/ghostty/kitty/wezterm/foot)"
     echo "  - any GNOME custom keyboard shortcut"
@@ -372,6 +500,7 @@ parse_args() {
         case "$1" in
             --yes) YES=1 ;;
             --no-shortcut) NO_SHORTCUT=1 ;;
+            --no-claude) NO_CLAUDE=1 ;;
             --uninstall) UNINSTALL=1 ;;
             --help | -h)
                 usage
@@ -405,6 +534,7 @@ main() {
     check_dependencies
     check_version_floors
     do_install
+    maybe_install_claude
     print_path_hint
     print_terminal_snippets
     print_init_shell_hint

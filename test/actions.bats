@@ -472,3 +472,23 @@ stub_count() {
   assert_line "fd missing"
   assert_line --regexp '^state '
 }
+
+@test "switching away re-saves the old session once we are gone" {
+  export ZELLIJ=0 ZELLIJ_SESSION_NAME=old
+  JOLT_DRY_RUN=""
+  _resave_later old
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    grep -q "save-session" "$STUB_LOG" && break
+    sleep 0.2
+  done
+  run cat "$STUB_LOG"
+  assert_output --partial $'--session\x1fold\x1faction\x1fsave-session'
+}
+
+@test "--dry-run never schedules a re-save" {
+  JOLT_DRY_RUN=1 _resave_later old
+  sleep 1.3
+  run cat "$STUB_LOG"
+  refute_output --partial save-session
+}

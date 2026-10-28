@@ -343,3 +343,104 @@ jolt_install_source() {
   run grep -c . "$GSET_LOG"
   assert_output 0
 }
+
+# ── claude-zellij ─────────────────────────────────────────────────────
+
+# claude_stub — a fake claude on PATH so the alias step runs.
+claude_stub() {
+  printf '#!/bin/sh\n' >"$STUB_DIR/claude"
+  chmod +x "$STUB_DIR/claude"
+}
+
+@test "installs claude-zellij next to zellij-jolt" {
+  run_install --yes
+  assert_success
+  [ -L "$HOME/.local/bin/claude-zellij" ]
+  [ -x "$HOME/.local/share/zellij-jolt/claude-zellij.sh" ]
+}
+
+@test "a hand-made claude-zellij is kept as .bak, never lost" {
+  mkdir -p "$HOME/.local/bin"
+  echo '# mine' >"$HOME/.local/bin/claude-zellij"
+  run_install --yes
+  assert_success
+  assert_output --partial "claude-zellij.bak"
+  run cat "$HOME/.local/bin/claude-zellij.bak"
+  assert_output "# mine"
+  [ -L "$HOME/.local/bin/claude-zellij" ]
+}
+
+@test "re-install does not back up its own claude-zellij" {
+  run_install --yes
+  run_install --yes
+  assert_success
+  [ ! -e "$HOME/.local/bin/claude-zellij.bak" ]
+}
+
+@test "adds a guarded flag-free claude alias to .zshrc" {
+  claude_stub
+  SHELL=/bin/zsh run_install --yes
+  assert_success
+  run cat "$HOME/.zshrc"
+  assert_output --partial "alias claude='claude-zellij'"
+  assert_output --partial 'ZELLIJ'
+  refute_output --partial dangerously
+}
+
+@test "an rc that already mentions claude-zellij is left unchanged" {
+  claude_stub
+  printf "alias claude='claude-zellij --my-flags'\n" >"$HOME/.bashrc"
+  SHELL=/bin/bash run_install --yes
+  assert_success
+  assert_output --partial "left unchanged"
+  run cat "$HOME/.bashrc"
+  assert_output "alias claude='claude-zellij --my-flags'"
+}
+
+@test "fish gets a conf.d file" {
+  claude_stub
+  SHELL=/usr/bin/fish run_install --yes
+  assert_success
+  run cat "$HOME/.config/fish/conf.d/claude-zellij.fish"
+  assert_output --partial "alias claude claude-zellij"
+}
+
+@test "the alias is added once across re-installs" {
+  claude_stub
+  SHELL=/bin/zsh run_install --yes
+  SHELL=/bin/zsh run_install --yes
+  run grep -c "alias claude='claude-zellij'" "$HOME/.zshrc"
+  assert_output 1
+}
+
+@test "--no-claude installs neither the wrapper nor the alias" {
+  claude_stub
+  SHELL=/bin/zsh run_install --yes --no-claude
+  assert_success
+  [ ! -e "$HOME/.local/bin/claude-zellij" ]
+  [ ! -e "$HOME/.zshrc" ]
+}
+
+@test "no alias when claude is missing or only a non-executable stub" {
+  # A PATH with just the tools install.sh needs, plus a broken claude stub.
+  local tools="$BATS_TEST_TMPDIR/tools" c
+  mkdir -p "$tools"
+  for c in bash basename dirname cp chmod ln mkdir mv rm grep sort head cat tr; do
+    ln -s "$(command -v "$c")" "$tools/$c"
+  done
+  echo 'echo stub' >"$tools/claude"
+  SHELL=/bin/zsh run env -u XDG_DATA_HOME -u XDG_BIN_HOME -u XDG_CURRENT_DESKTOP \
+    PATH="$STUB_DIR:$tools" "$tools/bash" "$REPO/install.sh" --yes
+  assert_success
+  [ ! -e "$HOME/.zshrc" ]
+}
+
+@test "uninstall removes our claude-zellij but not a hand-made one" {
+  run_install --yes
+  run_install --uninstall
+  [ ! -e "$HOME/.local/bin/claude-zellij" ]
+  mkdir -p "$HOME/.local/bin"
+  echo '# mine' >"$HOME/.local/bin/claude-zellij"
+  run_install --uninstall
+  [ -f "$HOME/.local/bin/claude-zellij" ]
+}

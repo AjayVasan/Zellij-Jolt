@@ -180,3 +180,46 @@ EOF
   [[ $JOLT_THEME_DESC == "t (legacy palette)" ]]
   [[ $FZF_COLOR_OPT == *"bg:#181818"* ]]
 }
+
+# fake_zellij_bin — a "binary" with a built-in theme block among junk bytes,
+# first on PATH, and an empty theme cache.
+fake_zellij_bin() {
+  local d="$BATS_TEST_TMPDIR/zbin"
+  mkdir -p "$d"
+  {
+    printf '\x00\x01ELF junk\x00'
+    printf 'themes {\n    other {\n        fg 1 1 1\n    }\n}\x00\x02'
+    printf '    builtintest {\n        fg 200 200 200\n        bg 10 10 10\n        green 0 255 0\n        yellow 255 255 0\n    }\n\x00\xff'
+  } >"$d/zellij"
+  chmod +x "$d/zellij"
+  PATH="$d:$PATH"
+  export XDG_CACHE_HOME="$BATS_TEST_TMPDIR/xcache"
+}
+
+@test "a built-in theme is read from the zellij binary and cached" {
+  fake_zellij_bin
+  CFG_THEME=builtintest
+  theme_load
+  [ "$JOLT_THEME_DESC" = "builtintest (legacy palette, built-in)" ]
+  [ -s "$XDG_CACHE_HOME/zellij-jolt/themes/builtintest.kdl" ]
+  # Cached: a later load works even without the binary.
+  rm "$BATS_TEST_TMPDIR/zbin/zellij"
+  JOLT_THEME_DESC=""
+  theme_load
+  [ "$JOLT_THEME_DESC" = "builtintest (legacy palette, built-in)" ]
+}
+
+@test "an unknown theme is remembered as a miss" {
+  fake_zellij_bin
+  CFG_THEME=nope
+  theme_load
+  [[ $JOLT_THEME_DESC == *"nope not found"* ]]
+  [ -e "$XDG_CACHE_HOME/zellij-jolt/themes/nope.miss" ]
+}
+
+@test "theme names that are not plain words never reach the cache" {
+  fake_zellij_bin
+  run _th_builtin "../evil"
+  assert_failure
+  [ ! -d "$XDG_CACHE_HOME/zellij-jolt" ]
+}

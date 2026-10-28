@@ -41,6 +41,7 @@ Then make it your terminal's shell or bind it inside Zellij. See [Setup](#setup)
 | ⌨️ **Session actions** | Delete, purge exited, rename and pin/unpin without leaving the picker. All keys are configurable. |
 | 🎨 **Theme-aware** | Uses your Zellij theme's colors automatically. Respects `NO_COLOR`. |
 | 🔀 **In-session switching** | Inside Zellij it uses `switch-session` instead of nesting. Bind it to `Alt s` as a floating pane. |
+| 🤖 **Claude Code panes survive restarts** | Bundled `claude-zellij` makes a pane running `claude` reopen the same conversation when Zellij resurrects the session. See [Claude Code panes](#claude-code-panes). |
 | 🩺 **Doctor & dry-run** | `--doctor` checks your environment. `--dry-run` prints the exact command it would run. |
 
 ## Screenshots
@@ -94,17 +95,20 @@ cd Zellij-Jolt
 This copies `zellij-jolt.sh` to `${XDG_DATA_HOME:-~/.local/share}/zellij-jolt/`, symlinks it at `${XDG_BIN_HOME:-~/.local/bin}/zellij-jolt`, checks dependency versions, and prints the config snippet for any terminal emulator it detects (see Setup below). On GNOME it also offers to register a keyboard shortcut (opt-in, skipped entirely under `--yes` or when stdin isn't a terminal; the shortcut opens zellij-jolt in the first terminal it finds — alacritty, kitty, wezterm, ghostty, foot or gnome-terminal — and is skipped when there is none).
 
 ```
-Usage: install.sh [--yes] [--no-shortcut] [--uninstall] [--help]
+Usage: install.sh [--yes] [--no-shortcut] [--no-claude] [--uninstall] [--help]
 
   --yes           Non-interactive: accept every default, never prompt.
   --no-shortcut   Skip the GNOME keyboard-shortcut question entirely.
+  --no-claude     Don't install claude-zellij or its shell alias.
   --uninstall     Remove the installed script and symlink, then exit.
   --help          Show this help.
 
 Stdin that isn't a terminal (e.g. piped input) behaves like --yes.
 ```
 
-`./install.sh --uninstall` removes the symlink and install directory only — it never touches shell rc files, terminal config, or GNOME shortcuts.
+It also installs the bundled `claude-zellij` wrapper at `${XDG_BIN_HOME:-~/.local/bin}/claude-zellij` (an existing, different one is kept as `claude-zellij.bak`) and offers to add the alias described in [Claude Code panes](#claude-code-panes). `--no-claude` skips both.
+
+`./install.sh --uninstall` removes the symlinks and install directory only — it never touches shell rc files, terminal config, or GNOME shortcuts.
 
 Make sure `${XDG_BIN_HOME:-~/.local/bin}` is on your `PATH`.
 
@@ -157,6 +161,22 @@ keybinds {
 }
 ```
 
+## Claude Code panes
+
+When Zellij resurrects a session (after a reboot, or when you pick an exited session in Zellij-Jolt), it re-runs each pane's saved command. For `claude` that starts a *new* conversation. The bundled `claude-zellij` wrapper fixes that: it gives each pane an ID that Zellij saves with the command, remembers which conversation the pane had open (following `/resume` and `/clear`), and resumes it on restore.
+
+The installer adds this to your shell rc (`~/.zshrc`, `~/.bashrc`, or a fish `conf.d` file) — only if the rc doesn't already mention `claude-zellij`, so an existing setup is left alone:
+
+```bash
+# claude-zellij (zellij-jolt): inside Zellij, `claude` reopens its
+# conversation when Zellij restores the pane.
+if [[ -n ${ZELLIJ:-} ]] && command -v claude-zellij >/dev/null 2>&1; then
+    alias claude='claude-zellij'
+fi
+```
+
+The alias adds no flags of its own; anything you type after `claude` is passed through. Outside Zellij, and for `claude -p`, `--version` and subcommands like `claude mcp`, the wrapper just runs `claude`. A `claude --resume ID` or `--continue` pane is wrapped too, so it also comes back after a restore. Conversation records live in `${XDG_DATA_HOME:-~/.local/share}/claude-zellij/` and are dropped after 60 days (`CLAUDE_ZELLIJ_KEEP_DAYS`). Set `CLAUDE_ZELLIJ_BIN` to run a specific `claude` binary.
+
 ## Keys
 
 | Key | Action | Config override |
@@ -166,12 +186,14 @@ keybinds {
 | `ctrl-d` | kill / delete the selected session | `KEY_DELETE` |
 | `alt-d` | delete all exited sessions | `KEY_PURGE` |
 | `ctrl-r` | rename the selected session | `KEY_RENAME` |
-| `ctrl-t` | pin / unpin the selected session | `KEY_PIN` |
-| `ctrl-o` | open a project directory as a session | `KEY_PROJECT` |
+| `ctrl-t` (`alt-t` inside Zellij) | pin / unpin the selected session | `KEY_PIN` |
+| `ctrl-o` (`ctrl-e` inside Zellij) | open a project directory as a session | `KEY_PROJECT` |
 | `ctrl-l` | new session from a layout | `KEY_LAYOUT` |
 | `ctrl-/` | toggle the preview | `KEY_PREVIEW` |
 | `?` | key help in the preview | `KEY_HELP` |
 | `esc` | back / quit | — |
+
+Inside Zellij, its default keymap takes `ctrl-o` (session mode) and `ctrl-t` (tab mode) before the picker sees them, so those two default to `ctrl-e` and `alt-t` there. A `KEY_*` you set yourself is used everywhere.
 
 Override values must be plain fzf key names (`ctrl-d`, `alt-enter`, `ctrl-/`, `?`, `f1`, …); anything else is rejected with a warning and falls back to the default.
 
@@ -181,13 +203,13 @@ File: `${XDG_CONFIG_HOME:-~/.config}/zellij-jolt/config`, plain `KEY=VALUE` line
 
 | Key | Default | Meaning |
 |---|---|---|
-| `PROJECT_ROOTS` | `~/projects ~/code ~/src ~/dev` | Space-separated parent directories scanned for git repositories by the project picker (`ctrl-o`), used when `zoxide` has no candidates |
+| `PROJECT_ROOTS` | `~/projects ~/code ~/src ~/dev` | Space-separated parent directories scanned for git repositories by the project picker (`ctrl-o`), used when `zoxide` has no candidates. If none of them exist, your home directory is scanned instead (hidden dirs and `node_modules` skipped) |
 | `PROJECT_DEPTH` | `3` | Max directory depth to search under each root when `fd`/`find` is used |
 | `DEFAULT_LAYOUT` | *(empty)* | Layout name applied to new sessions created via the project picker |
 | `PREVIEW` | `on` | `on`/`off` — show the preview pane |
 | `PREVIEW_POS` | `right` | `right`/`left`/`top`/`bottom` — preview pane position (invalid values fall back to `right`) |
 | `SHOW_EXITED` | `on` | `on`/`off` — list exited sessions (pinned ones always show) |
-| `THEME` | `auto` | `auto` (read from Zellij config), `none` (no color), or a specific Zellij theme name |
+| `THEME` | `auto` | `auto` (read from Zellij config), `none` (no color), or a specific Zellij theme name. Your own themes and Zellij's built-in ones (`dracula`, `catppuccin-mocha`, `tokyo-night`, …) both work; a built-in theme is read once from the `zellij` binary and cached in `~/.cache/zellij-jolt/themes/` |
 | `CONFIRM_DELETE` | `on` | `on`/`off` — confirm before delete/kill/purge |
 | `KEY_DELETE` | `ctrl-d` | Keybinding override, see Keys above |
 | `KEY_PURGE` | `alt-d` | Keybinding override |
@@ -243,7 +265,12 @@ zellij-jolt --preview-dir DIR       (internal) project preview listing
   fd missing
   config /home/you/.config/zellij-jolt/config (not found, using defaults)
   state /home/you/.local/state/zellij-jolt
+  claude-zellij /home/you/.local/bin/claude-zellij
+  claude /home/you/.local/bin/claude
   ```
+- **Restored `claude` pane says `permission denied`** — the pane ran a `claude` that isn't executable, usually `/usr/bin/claude` left behind by a broken `npm install -g @anthropic-ai/claude-code`. It happens when the terminal starts Zellij-Jolt directly: no rc file runs, so PATH lacks `~/.local/bin`. Zellij-Jolt now puts `~/.local/bin` (and `~/bin`, `$XDG_BIN_HOME`) back on PATH before starting Zellij, and `claude-zellij` skips non-executable copies. `--doctor` lists every `claude` on PATH and flags broken ones; remove the stale copy (e.g. `sudo npm rm -g @anthropic-ai/claude-code`) to be sure. Sessions already running keep their old PATH until the Zellij server restarts.
+- **Project picker (`ctrl-o`) is empty** — without `zoxide`, it scans `PROJECT_ROOTS`, or your home directory when none of those exist, up to `PROJECT_DEPTH` levels. Set `PROJECT_ROOTS` to where your repos live, or raise `PROJECT_DEPTH`.
+- **A restored session reopens the picker** — if you run Zellij-Jolt inside a session and switch away, Zellij's periodic snapshot could still record the picker pane. Zellij-Jolt now asks Zellij to re-save the session a second after it leaves (`zellij action save-session`; present in Zellij 0.45.1, silently skipped where missing).
 - **Don't want auto-start in a particular shell** — set `JOLT_SKIP=1` before that shell starts; the `--init-shell` snippet checks for it and no-ops.
 
 ## How it works

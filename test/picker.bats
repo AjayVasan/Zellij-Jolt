@@ -131,6 +131,9 @@ fzf_args() {
   assert_line --partial "ctrl-d:execute"
   assert_line --partial "$q --action delete {1}"
   assert_line --partial "reload"
+  assert_line --regexp "^ctrl-d:execute.*\+clear-query\+reload"
+  assert_line --regexp "^ctrl-r:execute.*\+clear-query\+reload"
+  refute_line --regexp "^ctrl-t:.*clear-query"
   assert_line --partial "ctrl-t:execute-silent"
   assert_line "ctrl-/:toggle-preview"
   assert_line --partial "?:preview"
@@ -237,6 +240,28 @@ mkproj() {
   assert_line "$BATS_TEST_TMPDIR/p/alpha"
   assert_line "$BATS_TEST_TMPDIR/p/deep/beta"
   refute_line --partial notrepo
+}
+
+@test "project_candidates scans HOME when no PROJECT_ROOTS exist" {
+  local h="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$h/work/gamma/.git" "$h/.cache/junk/.git" "$h/app/node_modules/dep/.git"
+  cfg "PROJECT_ROOTS=$BATS_TEST_TMPDIR/missing1 $BATS_TEST_TMPDIR/missing2"
+  jolt_source
+  config_load
+  HOME=$h run project_candidates
+  assert_success
+  assert_output "$h/work/gamma"
+}
+
+@test "project_candidates does not scan HOME when a root exists" {
+  local h="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$h/work/gamma/.git"
+  mkproj alpha
+  cfg "PROJECT_ROOTS=$BATS_TEST_TMPDIR/p"
+  jolt_source
+  config_load
+  HOME=$h run project_candidates
+  assert_output "$BATS_TEST_TMPDIR/p/alpha"
 }
 
 @test "project_candidates prefers zoxide, existing dirs only" {

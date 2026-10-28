@@ -165,6 +165,26 @@ die() {
     fallback_shell
 }
 
+# path_init — prepend the user's own bin dirs (XDG_BIN_HOME, ~/.local/bin,
+# ~/bin) to PATH when they exist and are missing. A terminal that runs us
+# as its shell skips the user's rc files, so PATH is the bare system one;
+# the zellij server we start inherits it, and resurrected command panes
+# (e.g. `claude` from ~/.local/bin) would resolve to a stale system copy or
+# not at all.
+path_init() {
+    local d add="" h=${HOME:-}
+    for d in ${XDG_BIN_HOME:+"$XDG_BIN_HOME"} ${h:+"$h/.local/bin" "$h/bin"}; do
+        [[ -d $d && $d != *:* ]] || continue
+        case ":${PATH:-}:$add" in
+            *":$d:"*) continue ;;
+        esac
+        add+="$d:"
+    done
+    [[ -n $add ]] || return 0
+    PATH="$add${PATH:-/usr/bin:/bin}"
+    export PATH
+}
+
 # ver_to_int "0.74.5" → 74005 (major*1000000 + minor*1000 + patch).
 # Leading text such as "zellij " and suffixes such as "-rc1" are ignored.
 ver_to_int() {
@@ -257,6 +277,12 @@ JOLT_KEY_DEFAULTS=(
     DELETE=ctrl-d PURGE=alt-d RENAME=ctrl-r PIN=ctrl-t PROJECT=ctrl-o
     LAYOUT=ctrl-l PREVIEW=ctrl-/ 'HELP=?' CREATE=alt-enter
 )
+# Inside zellij its default keymap grabs ctrl-o (session mode) and ctrl-t
+# (tab mode) before fzf ever sees them: default to keys zellij leaves free.
+if [[ -n ${ZELLIJ:-} ]]; then
+    JOLT_KEY_DEFAULTS=("${JOLT_KEY_DEFAULTS[@]/#PIN=ctrl-t/PIN=alt-t}")
+    JOLT_KEY_DEFAULTS=("${JOLT_KEY_DEFAULTS[@]/#PROJECT=ctrl-o/PROJECT=ctrl-e}")
+fi
 
 _cfg_defaults() {
     CFG_PROJECT_ROOTS="$HOME/projects $HOME/code $HOME/src $HOME/dev"
@@ -646,6 +672,43 @@ _th_set_default() {
     JOLT_THEME_DESC="terminal default${1:+ ($1)}"
 }
 
+# _th_builtin NAME — path of a cached copy of zellij's built-in theme NAME
+# in REPLY. Built-in themes are compiled into the zellij binary, never on
+# disk, so the first lookup copies NAME's block out of the binary (about a
+# quarter second) into ${XDG_CACHE_HOME:-~/.cache}/zellij-jolt/themes/; a
+# miss is remembered until zellij is updated. Returns 1 when unavailable.
+_th_builtin() {
+    local name=${1:-} cache bin tmp
+    REPLY=""
+    [[ $name =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+    cache="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/zellij-jolt/themes"
+    if [[ -s $cache/$name.kdl ]]; then
+        REPLY="$cache/$name.kdl"
+        return 0
+    fi
+    bin=$(type -P zellij 2>/dev/null) || return 1
+    [[ -f $cache/$name.miss && ! $bin -nt $cache/$name.miss ]] && return 1
+    mkdir -p "$cache" 2>/dev/null || return 1
+    tmp="$cache/.$name.$$"
+    # Printable runs of the binary, then NAME's top-level block (4-space
+    # indent, as in zellij's theme files) up to its matching brace.
+    LC_ALL=C tr -c '[:print:]\n' '\n' <"$bin" 2>/dev/null | awk -v n="$name" '
+        !grab && $0 == "    " n " {" { grab = 1; depth = 0; print "themes {" }
+        grab {
+            print
+            o = gsub(/\{/, "{"); c = gsub(/\}/, "}")
+            depth += o - c
+            if (depth <= 0) { print "}"; exit }
+        }' >"$tmp" 2>/dev/null
+    if [[ -s $tmp ]] && mv -f "$tmp" "$cache/$name.kdl" 2>/dev/null; then
+        REPLY="$cache/$name.kdl"
+        return 0
+    fi
+    rm -f "$tmp"
+    : >"$cache/$name.miss" 2>/dev/null
+    return 1
+}
+
 # theme_load — set C_RESET C_DIM C_BOLD C_ACCENT C_OK C_WARN C_MUTED
 # C_TITLE C_ITA (ANSI strings, empty when colorless), FZF_COLOR_OPT (value
 # for fzf --color; "bw" when colorless) and JOLT_THEME_DESC (for --doctor).
@@ -691,6 +754,12 @@ theme_load() {
                 break
             fi
         done
+        if [[ -z ${_th_fmt[$name]:-} ]] && _th_builtin "$name"; then
+            set -f
+            _th_scan "$REPLY"
+            set +f
+            [[ -n ${_th_fmt[$name]:-} ]] && src=built-in
+        fi
     fi
     if ((noglob)); then
         set -f
@@ -891,6 +960,77 @@ meta_read() {
         esac
     done <"$f"
     printf '%s' "$buf"
+}
+
+# layout_read NAME — fallback for meta_read when a session has a cached
+# session-layout.kdl but no usable session-metadata.kdl (seen on exited
+# sessions): the same tab/pane records, taken from the layout's top-level
+# tab blocks (swap layouts and new_tab_template are skipped). Only panes
+# with a command are listed; a shell running a script (`bash …/foo`) shows
+# as the script's name. Returns 1 if the file is missing.
+layout_read() {
+    local f="${JOLT_CACHE_DIR:-}/$1/session-layout.kdl" line t open close
+    local depth=0 tpos=-1 intab=0 pend=0 pcmd="" ptitle="" tname act
+    local str='"([^"\\]|\\.)*"'
+    [[ -f $f ]] || return 1
+    _lr_flush() {
+        ((pend)) && printf 'pane\t%s\t%s\t%s\n' "$tpos" "$ptitle" "$pcmd"
+        pend=0
+    }
+    while IFS= read -r line || [[ -n $line ]]; do
+        _trim_line "$line"
+        line=$REPLY
+        # Braces inside strings don't count toward the depth.
+        t=$line
+        while [[ $t =~ $str ]]; do
+            t=${t/"${BASH_REMATCH[0]}"/}
+        done
+        open=${t//[^\{]/}
+        close=${t//[^\}]/}
+        if ((depth == 1)) && [[ $t == tab || $t == "tab "* ]]; then
+            _lr_flush
+            tpos=$((tpos + 1))
+            intab=1
+            tname="Tab #$((tpos + 1))"
+            if [[ $line =~ (^|[[:space:]])name=($str) ]]; then
+                _kdl_str "${BASH_REMATCH[2]}"
+                tname=$REPLY
+            fi
+            act=false
+            [[ $t == *" focus=true"* ]] && act=true
+            printf 'tab\t%s\t%s\t%s\n' "$tpos" "$act" "$tname"
+        elif ((intab)) && [[ $t == pane || $t == "pane "* ]]; then
+            _lr_flush
+            if [[ $line =~ (^|[[:space:]])command=($str) ]]; then
+                _kdl_str "${BASH_REMATCH[2]}"
+                pcmd=$REPLY
+                ptitle=""
+                if [[ $line =~ (^|[[:space:]])name=($str) ]]; then
+                    _kdl_str "${BASH_REMATCH[2]}"
+                    ptitle=$REPLY
+                fi
+                pend=1
+            fi
+        elif ((pend)) && [[ $t == args || $t == "args "* ]]; then
+            case ${pcmd##*/} in
+                bash | sh | zsh | dash | fish)
+                    if [[ $line =~ ^args[[:space:]]+($str) ]]; then
+                        _kdl_str "${BASH_REMATCH[1]}"
+                        [[ $REPLY == -* ]] || pcmd=${REPLY##*/}
+                    fi
+                    ;;
+            esac
+            _lr_flush
+        fi
+        depth=$((depth + ${#open} - ${#close}))
+        if ((intab && depth <= 1)); then
+            _lr_flush
+            intab=0
+        fi
+    done <"$f"
+    _lr_flush
+    unset -f _lr_flush
+    return 0
 }
 
 # layout_cwd NAME — the top-level `cwd "…"` of NAME's cached
@@ -1516,7 +1656,10 @@ _pv_session() {
     fi
     _pv_edge ├ ┤
 
-    if ! meta=$(meta_read "$name"); then
+    # Exited sessions can have a cached layout but no usable metadata.
+    meta=$(meta_read "$name") || meta=""
+    [[ $meta == *tab$'\t'* ]] || meta=$(layout_read "$name") || meta=""
+    if [[ -z $meta ]]; then
         _pv_row "" "no cached layout yet" "" "$C_MUTED"
         _pv_edge ╰ ╯
         return 0
@@ -1757,6 +1900,7 @@ go() {
             return 1
         fi
         state_touch "$name" || true
+        _resave_later "${ZELLIJ_SESSION_NAME:-}"
         # Options first, then `--` so a name starting with "-" stays a name.
         argv=(zellij action switch-session)
         [[ -n $cwd ]] && argv+=(--cwd "$cwd")
@@ -1796,6 +1940,21 @@ go() {
     else
         run_or_exec zellij attach -c "$name"
     fi
+}
+
+# _resave_later SESSION — when we switch away from SESSION, zellij's last
+# periodic snapshot of it may still show this picker running in a pane, so
+# resurrecting SESSION later would reopen the picker. Once we have exited
+# (about a second later), ask zellij to save SESSION again, from a detached
+# job that survives the pane closing. Best effort: older zellij lacks
+# save-session and the error is ignored. Skipped under --dry-run.
+_resave_later() {
+    [[ -n ${1:-} && ${JOLT_DRY_RUN:-} != 1 ]] || return 0
+    local -a detach=()
+    command -v setsid >/dev/null 2>&1 && detach=(setsid)
+    ${detach[@]+"${detach[@]}"} nohup sh -c 'sleep 1; zellij --session "$1" action save-session' _ "$1" \
+        </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null || true
 }
 
 # act_delete KEY — kill (if running) and delete session "s:NAME" after a
@@ -1896,7 +2055,16 @@ act_rename() {
         if [[ -n ${JOLT_RENAME_TO+x} ]]; then
             raw=$JOLT_RENAME_TO
         else
-            _tty_read "Rename $old to: " || return 0
+            # Same readline prompt as new sessions: prefilled, esc cancels.
+            _name_prompt "$old" "" "Rename $old to (esc cancels): "
+            case $? in
+                0) ;;
+                2)
+                    warn "too many unusable names; rename cancelled"
+                    return 1
+                    ;;
+                *) return 0 ;;
+            esac
             raw=$REPLY
         fi
         _trim_line "$raw"
@@ -1993,7 +2161,44 @@ doctor() {
         printf 'config %s (not found, using defaults)\n' "$JOLT_CONFIG_FILE"
     fi
     printf 'state %s\n' "$JOLT_STATE_DIR"
+    _doctor_claude
     return "$rc"
+}
+
+# _doctor_claude — report the claude-zellij integration (optional, never
+# fails the doctor): the wrapper, and which `claude` a resurrected pane
+# would run under the PATH zellij gets from us.
+_doctor_claude() {
+    local c d s first="" ifs=$IFS
+    local -a dirs seen=()
+    if command -v claude-zellij >/dev/null 2>&1; then
+        printf 'claude-zellij %s\n' "$(command -v claude-zellij)"
+    else
+        printf 'claude-zellij missing (optional: ./install.sh installs it)\n'
+    fi
+    # Walk PATH by hand: `type -ap` hides non-executable files, which are
+    # exactly the broken ones a command pane trips over.
+    IFS=: read -r -a dirs <<<"${PATH:-}"
+    IFS=$ifs
+    for d in ${dirs[@]+"${dirs[@]}"}; do
+        c="${d:-.}/claude"
+        [[ -e $c || -L $c ]] || continue
+        # /bin → /usr/bin and similar: report each file once.
+        for s in ${seen[@]+"${seen[@]}"}; do
+            [[ $c -ef $s ]] && continue 2
+        done
+        seen+=("$c")
+        if [[ -z $first ]]; then
+            first=$c
+            if [[ -x $c && ! -d $c ]]; then
+                printf 'claude %s\n' "$c"
+                continue
+            fi
+            printf 'claude %s (NOT executable: restored claude panes fail with "permission denied"; remove it or put a working claude earlier in PATH)\n' "$c"
+        elif [[ ! -x $c || -d $c ]]; then
+            printf 'claude %s (shadowed, not executable; consider removing it)\n' "$c"
+        fi
+    done
 }
 
 # _pause — after a message, wait for one key so the next fzf redraw does
@@ -2007,14 +2212,15 @@ _pause() {
     printf '\n' >&2
 }
 
-# _name_prompt DEFAULT [EMPTY_OK] — ask for a session name on the terminal
+# _name_prompt DEFAULT [EMPTY_OK] [PROMPT] — ask for a session name on the terminal
 # ($JOLT_TTY, default /dev/tty; readline-edited and prefilled with DEFAULT
 # when it is a terminal). The sanitized name goes in REPLY. An empty answer
 # means DEFAULT; with no DEFAULT it yields REPLY="" when EMPTY_OK is set,
 # else asks once more. Returns 1 on cancel: EOF/ctrl-d, ctrl-c, a second
-# empty answer, or no terminal.
+# empty answer, or no terminal; 2 after three unusable names.
 _name_prompt() {
-    local def=${1:-} empty_ok=${2:-} tty=${JOLT_TTY:-/dev/tty} ans rc tries=0
+    local def=${1:-} empty_ok=${2:-} prompt=${3:-"Session name (esc cancels): "}
+    local tty=${JOLT_TTY:-/dev/tty} ans rc tries=0
     while ((tries++ < 3)); do
         [[ -r $tty ]] || return 1
         # readline swallows ctrl-c inside `read -e`, so read in a subshell
@@ -2028,7 +2234,7 @@ _name_prompt() {
         ans=$(
             trap 'exit 130' INT
             bind '"\e": "\C-a\C-k\C-v\C-x\C-m"' 2>/dev/null
-            IFS= read -r -e -i "$def" -p "Session name (esc cancels): " a <"$tty" >&2 || exit $?
+            IFS= read -r -e -i "$def" -p "$prompt" a <"$tty" >&2 || exit $?
             [[ $a == *$'\x18'* ]] && exit 131
             printf '%s' "$a"
         )
@@ -2052,7 +2258,7 @@ _name_prompt() {
         REPLY=$(sanitize_name "$ans") && return 0
         warn "unusable session name: $ans"
     done
-    return 1
+    return 2
 }
 
 # fzf_base_opts [HEADER] — fill the global FZF_OPTS array with the options
@@ -2117,6 +2323,17 @@ project_candidates() {
     set -f
     read -r -a roots <<<"${CFG_PROJECT_ROOTS:-}"
     ((noglob)) || set +f
+    # None of the roots exist (e.g. the defaults on a machine that keeps
+    # repos elsewhere): scan $HOME instead of showing nothing.
+    for root in ${roots[@]+"${roots[@]}"}; do
+        [[ -d $root ]] && break
+        root=""
+    done
+    # find, not fd, there: it prunes ~/.cache, ~/.local and friends.
+    if [[ -z ${root:-} && -n ${HOME:-} && -d $HOME ]]; then
+        roots=("$HOME")
+        fd=""
+    fi
     for root in ${roots[@]+"${roots[@]}"}; do
         [[ -d $root ]] || continue
         while IFS= read -r d; do
@@ -2126,10 +2343,13 @@ project_candidates() {
             seen[$d]=1
             out+="$d"$'\n'
         done < <(
+            # node_modules (and, with find, hidden dirs other than .git)
+            # are skipped: they hold caches and vendored repos, not projects.
             if [[ -n $fd ]]; then
-                "$fd" -H -t d -d "$depth" '^\.git$' "$root"
+                "$fd" -H -t d -d "$depth" -E node_modules '^\.git$' "$root"
             else
-                find "$root" -maxdepth "$depth" -type d -name .git -prune -print
+                find "$root" -maxdepth "$depth" \( -name node_modules -o -name '.?*' ! -name .git \) -prune \
+                    -o -type d -name .git -prune -print
             fi 2>/dev/null | sort
         )
     done
@@ -2299,8 +2519,9 @@ _picker_export() {
     export JOLT_CACHE_DIR JOLT_ZELLIJ_CONFIG JOLT_CONFIG_FILE JOLT_STATE_DIR
 }
 
-# _picker_bind KEY ACTION CMD [reload] — append "--bind KEY:ACTION(CMD)"
-# (plus "+reload(<self> --list)") to picker_main's binds array.
+# _picker_bind KEY ACTION CMD [reload|clear] — append "--bind KEY:ACTION(CMD)"
+# (plus "+reload(<self> --list)"; clear also empties the query first) to
+# picker_main's binds array.
 _picker_bind() {
     local b
     _fzf_act "$2" "$3" || {
@@ -2308,6 +2529,8 @@ _picker_bind() {
         return 1
     }
     b=$REPLY
+    # The query that found a deleted/renamed row would now match nothing.
+    [[ ${4:-} == clear ]] && b+="+clear-query"
     if [[ -n ${4:-} ]]; then
         _fzf_act reload "$JOLT_Q --list" || return 1
         b+="+$REPLY"
@@ -2347,9 +2570,9 @@ picker_main() {
 
     win="$(_preview_pos):55%:wrap"
     [[ ${CFG_PREVIEW:-on} == off ]] && win+=":hidden"
-    _picker_bind "$CFG_KEY_DELETE" execute "$JOLT_Q --action delete {1}" reload
-    _picker_bind "$CFG_KEY_PURGE" execute "$JOLT_Q --action purge" reload
-    _picker_bind "$CFG_KEY_RENAME" execute "$JOLT_Q --action rename {1}" reload
+    _picker_bind "$CFG_KEY_DELETE" execute "$JOLT_Q --action delete {1}" clear
+    _picker_bind "$CFG_KEY_PURGE" execute "$JOLT_Q --action purge" clear
+    _picker_bind "$CFG_KEY_RENAME" execute "$JOLT_Q --action rename {1}" clear
     _picker_bind "$CFG_KEY_PIN" execute-silent "$JOLT_Q --action pin {1}" reload
     _picker_bind "$CFG_KEY_HELP" preview "$JOLT_Q --preview a:help"
     binds+=(--bind "$CFG_KEY_PREVIEW:toggle-preview")
@@ -2444,7 +2667,9 @@ Keys (change with KEY_* in the config; defaults shown):
   alt-d        delete all exited sessions                  KEY_PURGE
   ctrl-r       rename the selected session                 KEY_RENAME
   ctrl-t       pin / unpin the selected session            KEY_PIN
+               (alt-t inside zellij, which takes ctrl-t)
   ctrl-o       open a project directory as a session       KEY_PROJECT
+               (ctrl-e inside zellij, which takes ctrl-o)
   ctrl-l       new session from a layout                   KEY_LAYOUT
   ctrl-/       toggle the preview                          KEY_PREVIEW
   ?            key help in the preview                     KEY_HELP
@@ -2496,6 +2721,7 @@ main() {
         "" | --dry-run)
             [[ ${1:-} == --dry-run ]] && JOLT_DRY_RUN=1
             JOLT_SAID=""
+            path_init
             config_load
             theme_load
             check_deps || die "missing or outdated dependencies"
@@ -2548,6 +2774,7 @@ main() {
             init_shell "$2" || _usage_error "unsupported shell: $2 (bash|zsh|fish)"
             ;;
         --doctor)
+            path_init
             doctor
             exit $?
             ;;

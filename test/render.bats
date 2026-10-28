@@ -315,3 +315,46 @@ kdl_pane() {
   assert_success
   refute_output --partial memora_new
 }
+
+@test "preview falls back to the cached layout when metadata has no tabs" {
+  local d="$JOLT_CACHE_DIR/layoutonly"
+  mkdir -p "$d"
+  cat >"$d/session-layout.kdl" <<'KDL'
+layout {
+    cwd "/tmp"
+    tab name="code {x}" focus=true {
+        pane size=1 borderless=true {
+            plugin location="zellij:tab-bar"
+        }
+        pane command="bash" focus=true {
+            args "/home/u/.local/bin/claude-zellij" "--pane-id" "x"
+            start_suspended true
+        }
+        pane command="htop" name="mon"
+    }
+    tab name="logs" {
+        pane
+    }
+    new_tab_template {
+        pane command="ignored"
+    }
+    swap_tiled_layout name="vertical" {
+        tab max_panes=5 {
+            pane command="ignored2"
+        }
+    }
+}
+KDL
+  run layout_read layoutonly
+  assert_output $'tab\t0\ttrue\tcode {x}\npane\t0\t\tclaude-zellij\npane\t0\tmon\thtop\ntab\t1\tfalse\tlogs'
+}
+
+@test "preview of a layout-only session lists its tabs" {
+  local d="$JOLT_CACHE_DIR/memora_new"
+  rm -f "$d/session-metadata.kdl"
+  printf 'layout {\n    tab name="only" focus=true {\n        pane command="vim"\n    }\n}\n' >"$d/session-layout.kdl"
+  run preview_render s:memora_new
+  assert_output --partial "1. only"
+  assert_output --partial "vim"
+  refute_output --partial "no cached layout yet"
+}

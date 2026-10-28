@@ -231,3 +231,43 @@ setup() {
   run "$REPO/zellij-jolt.sh" --init-shell tcsh
   assert_failure 2
 }
+
+@test "path_init prepends missing user bin dirs once" {
+  jolt_source
+  local h="$BATS_TEST_TMPDIR/h"
+  mkdir -p "$h/.local/bin" "$h/bin"
+  run env -u XDG_BIN_HOME HOME="$h" PATH=/usr/bin:/bin bash -c \
+    'JOLT_NO_MAIN=1 source "$1"; path_init; path_init; printf %s "$PATH"' _ "$REPO/zellij-jolt.sh"
+  assert_output "$h/.local/bin:$h/bin:/usr/bin:/bin"
+}
+
+@test "path_init leaves PATH alone when the dirs are already there or missing" {
+  local h="$BATS_TEST_TMPDIR/h"
+  mkdir -p "$h/.local/bin"
+  run env -u XDG_BIN_HOME HOME="$h" PATH="/usr/bin:$h/.local/bin" bash -c \
+    'JOLT_NO_MAIN=1 source "$1"; path_init; printf %s "$PATH"' _ "$REPO/zellij-jolt.sh"
+  assert_output "/usr/bin:$h/.local/bin"
+}
+
+@test "--doctor flags a non-executable claude first on PATH" {
+  local d="$BATS_TEST_TMPDIR/broken"
+  mkdir -p "$d"
+  echo 'echo stub' >"$d/claude"
+  HOME="$BATS_TEST_TMPDIR/h" PATH="$d:$PATH" run "$REPO/zellij-jolt.sh" --doctor
+  assert_output --partial "claude $d/claude (NOT executable"
+}
+
+@test "inside zellij, pin and project default to keys zellij leaves free" {
+  export ZELLIJ=0
+  jolt_source
+  config_load
+  [ "$CFG_KEY_PIN" = alt-t ]
+  [ "$CFG_KEY_PROJECT" = ctrl-e ]
+}
+
+@test "outside zellij, pin and project keep ctrl-t and ctrl-o" {
+  jolt_source
+  config_load
+  [ "$CFG_KEY_PIN" = ctrl-t ]
+  [ "$CFG_KEY_PROJECT" = ctrl-o ]
+}
