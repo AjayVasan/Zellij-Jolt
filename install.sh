@@ -389,6 +389,7 @@ setup_claude_alias() {
         [[ -z $ans || $ans =~ ^[Yy]$ ]] || return 0
     fi
     mkdir -p "$(dirname "$rc")" || install_fail "could not create $(dirname "$rc")"
+    # shellcheck disable=SC2094  # the snippet function only looks at the name
     {
         [[ ! -s $rc ]] || echo ""
         claude_alias_snippet "$rc"

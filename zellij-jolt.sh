@@ -1952,6 +1952,7 @@ _resave_later() {
     [[ -n ${1:-} && ${JOLT_DRY_RUN:-} != 1 ]] || return 0
     local -a detach=()
     command -v setsid >/dev/null 2>&1 && detach=(setsid)
+    # shellcheck disable=SC2016  # $1 is expanded by that sh, not by us
     ${detach[@]+"${detach[@]}"} nohup sh -c 'sleep 1; zellij --session "$1" action save-session' _ "$1" \
         </dev/null >/dev/null 2>&1 &
     disown 2>/dev/null || true
@@ -2170,7 +2171,7 @@ doctor() {
 # would run under the PATH zellij gets from us.
 _doctor_claude() {
     local c d s first="" ifs=$IFS
-    local -a dirs seen=()
+    local -a dirs found=()
     if command -v claude-zellij >/dev/null 2>&1; then
         printf 'claude-zellij %s\n' "$(command -v claude-zellij)"
     else
@@ -2184,10 +2185,10 @@ _doctor_claude() {
         c="${d:-.}/claude"
         [[ -e $c || -L $c ]] || continue
         # /bin → /usr/bin and similar: report each file once.
-        for s in ${seen[@]+"${seen[@]}"}; do
+        for s in ${found[@]+"${found[@]}"}; do
             [[ $c -ef $s ]] && continue 2
         done
-        seen+=("$c")
+        found+=("$c")
         if [[ -z $first ]]; then
             first=$c
             if [[ -x $c && ! -d $c ]]; then
