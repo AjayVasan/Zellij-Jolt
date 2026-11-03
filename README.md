@@ -4,6 +4,8 @@
 
 **Jolt into your Zellij sessions — fuzzy picker, live preview, instant attach.**
 
+**🤖 Claude Code panes come back with their conversation.**
+
 [![Version](https://img.shields.io/badge/version-2.0.0-73d936?style=flat-square)](https://github.com/AjayVasan/Zellij-Jolt/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-ffdd33?style=flat-square)](LICENSE)
 [![Bash](https://img.shields.io/badge/bash-%E2%89%A54.2-4eaa25?style=flat-square&logo=gnubash&logoColor=white)](#requirements)
@@ -20,7 +22,12 @@ Zellij-Jolt turns your terminal into a keyboard-first launcher for [Zellij](http
 
 It's a **single bash script** with no daemon and no plugin. It reads Zellij's own session cache and only changes a session when you press a key.
 
-It also bundles **`claude-zellij`**: a [Claude Code](https://claude.com/claude-code) pane that Zellij restores after a reboot or crash reopens the same conversation instead of starting a blank chat. See [Claude Code panes](#claude-code-panes).
+> [!TIP]
+> **🤖 Running Claude Code in Zellij? Your conversations survive restarts.**
+>
+> When Zellij restores a session after a reboot or crash, a pane that was running `claude` normally starts a blank chat. Zellij-Jolt bundles **`claude-zellij`**, which makes that pane reopen the **same conversation**. The installer sets it up; press Enter on the restored pane and you're back where you left off. [How it works ↓](#claude-code-panes)
+>
+> <img src="docs/assets/claude-resume.gif" alt="Claude Code in a Zellij pane is told a codeword; the session is killed, resurrected from Zellij-Jolt, Enter is pressed on the restored pane, and Claude answers the codeword from the same conversation" width="900">
 
 ## Quick start
 
@@ -35,6 +42,7 @@ Then make it your terminal's shell or bind it inside Zellij. See [Setup](#setup)
 
 | | |
 |---|---|
+| 🤖 **Claude Code panes survive restarts** | Bundled `claude-zellij` makes a pane running `claude` reopen the same conversation when Zellij resurrects the session. See [Claude Code panes](#claude-code-panes). |
 | 🔎 **One fuzzy list** | Actions, pinned, active and exited sessions in one picker, ordered pinned → active → exited → current. Type a name that doesn't exist to create it. |
 | 👁️ **Live preview** | Status, age, last used, cwd, and every tab with its panes' running commands (`▸` marks the active tab). |
 | ♻️ **Resurrect** | Exited sessions stay in the list with their saved layout. Pick one to bring it back. |
@@ -43,7 +51,6 @@ Then make it your terminal's shell or bind it inside Zellij. See [Setup](#setup)
 | ⌨️ **Session actions** | Delete, purge exited, rename and pin/unpin without leaving the picker. All keys are configurable. |
 | 🎨 **Theme-aware** | Uses your Zellij theme's colors automatically. Respects `NO_COLOR`. |
 | 🔀 **In-session switching** | Inside Zellij it uses `switch-session` instead of nesting. Bind it to `Alt s` as a floating pane. |
-| 🤖 **Claude Code panes survive restarts** | Bundled `claude-zellij` makes a pane running `claude` reopen the same conversation when Zellij resurrects the session. See [Claude Code panes](#claude-code-panes). |
 | 🩺 **Doctor & dry-run** | `--doctor` checks your environment. `--dry-run` prints the exact command it would run. |
 
 ## Screenshots
@@ -164,10 +171,6 @@ keybinds {
 ```
 
 ## Claude Code panes
-
-<img src="docs/assets/claude-resume.gif" alt="Claude Code in a Zellij pane is told a codeword; the session is killed, resurrected from Zellij-Jolt, Enter is pressed on the restored pane, and Claude answers the codeword from the same conversation" width="900">
-
-*Claude is told a codeword, the session is killed, Zellij-Jolt resurrects it, and after Enter the pane is back in the same conversation.*
 
 When Zellij resurrects a session (after a reboot, or when you pick an exited session in Zellij-Jolt), it re-runs each pane's saved command. For `claude` that starts a *new* conversation. The bundled `claude-zellij` wrapper fixes that: it gives each pane an ID that Zellij saves with the command, remembers which conversation the pane had open (following `/resume` and `/clear`), and resumes it on restore.
 
