@@ -9,7 +9,7 @@
 [![Bash](https://img.shields.io/badge/bash-%E2%89%A54.2-4eaa25?style=flat-square&logo=gnubash&logoColor=white)](#requirements)
 [![Zellij](https://img.shields.io/badge/zellij-%E2%89%A50.39-f97316?style=flat-square)](https://zellij.dev)
 [![fzf](https://img.shields.io/badge/fzf-%E2%89%A50.38-96a6c8?style=flat-square)](https://github.com/junegunn/fzf)
-[![Tests](https://img.shields.io/badge/tests-220%20passing-73d936?style=flat-square)](test/)
+[![Tests](https://img.shields.io/badge/tests-258%20passing-73d936?style=flat-square)](test/)
 [![ShellCheck](https://img.shields.io/badge/shellcheck-clean-73d936?style=flat-square)](https://www.shellcheck.net)
 
 <img src="docs/assets/demo.gif" alt="Zellij-Jolt demo: browsing sessions with live preview, fuzzy filtering, key help and the project picker" width="900">
@@ -19,6 +19,8 @@
 Zellij-Jolt turns your terminal into a keyboard-first launcher for [Zellij](https://zellij.dev). Open a terminal, and an `fzf` picker lists every session: pinned, active and exited. A live preview shows each session's tabs and running commands. From that one screen you can attach, create, rename, pin, delete, resurrect, or open a project or layout.
 
 It's a **single bash script** with no daemon and no plugin. It reads Zellij's own session cache and only changes a session when you press a key.
+
+It also bundles **`claude-zellij`**: a [Claude Code](https://claude.com/claude-code) pane that Zellij restores after a reboot or crash reopens the same conversation instead of starting a blank chat. See [Claude Code panes](#claude-code-panes).
 
 ## Quick start
 
@@ -163,7 +165,13 @@ keybinds {
 
 ## Claude Code panes
 
+<img src="docs/assets/claude-resume.gif" alt="Claude Code in a Zellij pane is told a codeword; the session is killed, resurrected from Zellij-Jolt, Enter is pressed on the restored pane, and Claude answers the codeword from the same conversation" width="900">
+
+*Claude is told a codeword, the session is killed, Zellij-Jolt resurrects it, and after Enter the pane is back in the same conversation.*
+
 When Zellij resurrects a session (after a reboot, or when you pick an exited session in Zellij-Jolt), it re-runs each pane's saved command. For `claude` that starts a *new* conversation. The bundled `claude-zellij` wrapper fixes that: it gives each pane an ID that Zellij saves with the command, remembers which conversation the pane had open (following `/resume` and `/clear`), and resumes it on restore.
+
+Like any restored command pane, it waits for you to press Enter before it starts (Zellij shows `Waiting to run: … claude-zellij --pane-id …`).
 
 The installer adds this to your shell rc (`~/.zshrc`, `~/.bashrc`, or a fish `conf.d` file) — only if the rc doesn't already mention `claude-zellij`, so an existing setup is left alone:
 
