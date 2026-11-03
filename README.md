@@ -241,13 +241,14 @@ zellij-jolt --list                  print picker rows (used by fzf reload)
 zellij-jolt --preview KEY           render preview for a row key
 zellij-jolt --action ACT KEY        keybind handler: delete|rename|pin|purge
 zellij-jolt --dry-run               print final zellij command instead of exec
+zellij-jolt --raise                 picker, but ask the desktop for focus first
 zellij-jolt --init-shell SHELL      print guarded auto-start snippet (bash|zsh|fish)
 zellij-jolt --doctor                environment diagnostics
 zellij-jolt --version | --help
 zellij-jolt --preview-dir DIR       (internal) project preview listing
 ```
 
-`--preview`, `--list`, `--action` and `--preview-dir` are internal callbacks used by fzf (preview, reload and keybind handlers); you won't normally run them by hand. `--dry-run` runs the picker but prints the `zellij`/`exec` command it would have run instead of executing it — useful for checking what a selection will actually do.
+`--preview`, `--list`, `--action` and `--preview-dir` are internal callbacks used by fzf (preview, reload and keybind handlers); you won't normally run them by hand. `--dry-run` runs the picker but prints the `zellij`/`exec` command it would have run instead of executing it — useful for checking what a selection will actually do. `--raise` (used by the GNOME shortcut, and combinable with `--dry-run`) rings the terminal bell once before the picker opens, so a window that a rule such as the Auto Move Windows extension put on another workspace asks for focus: GNOME shows "… is ready", or jumps straight to it with the Grand Theft Focus extension — the same thing Chrome does.
 
 ## Troubleshooting
 

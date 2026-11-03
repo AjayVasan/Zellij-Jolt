@@ -2655,6 +2655,7 @@ Usage:
   zellij-jolt --preview KEY           render preview for a row key
   zellij-jolt --action ACT KEY        keybind handler: delete|rename|pin|purge
   zellij-jolt --dry-run               print final zellij command instead of exec
+  zellij-jolt --raise                 picker, but ask the desktop for focus first
   zellij-jolt --init-shell SHELL      print guarded auto-start snippet (bash|zsh|fish)
   zellij-jolt --doctor                environment diagnostics
   zellij-jolt --version | --help
@@ -2717,7 +2718,11 @@ _usage_error() {
 }
 
 main() {
-    local rc
+    local rc raise=""
+    if [[ ${1:-} == --raise ]]; then
+        raise=1
+        shift
+    fi
     case "${1:-}" in
         "" | --dry-run)
             [[ ${1:-} == --dry-run ]] && JOLT_DRY_RUN=1
@@ -2728,6 +2733,12 @@ main() {
             check_deps || die "missing or outdated dependencies"
             # fzf would paint over any startup warning: let it be read first.
             [[ -z ${JOLT_SAID:-} ]] || _pause
+            # One bell makes an unfocused terminal mark itself urgent, the
+            # same focus request a single-instance app like Chrome sends.
+            # GNOME then shows "is ready" for a window auto-moved to another
+            # workspace (or jumps there with an extension like Grand Theft
+            # Focus) instead of leaving it there unnoticed.
+            [[ -n $raise && -t 1 ]] && printf '\a'
             picker_main
             ;;
         --version | -V)

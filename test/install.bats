@@ -308,7 +308,7 @@ jolt_install_source() {
   assert_success
   local sep
   sep="$(printf '\x1f')"
-  run grep -c "custom-keybinding:.*custom0/${sep}command${sep}alacritty -e /opt/bin/zellij-jolt${sep}" "$GSET_LOG"
+  run grep -c "custom-keybinding:.*custom0/${sep}command${sep}alacritty -e /opt/bin/zellij-jolt --raise${sep}" "$GSET_LOG"
   assert_output 1
 }
 
@@ -321,11 +321,11 @@ jolt_install_source() {
     printf '#!/bin/sh\nexit 0\n' >"$d/$t"
     chmod +x "$d/$t"
     case $t in
-      kitty) expect="kitty /b/zellij-jolt" ;;
-      wezterm) expect="wezterm start -- /b/zellij-jolt" ;;
-      ghostty) expect="ghostty -e /b/zellij-jolt" ;;
-      foot) expect="foot /b/zellij-jolt" ;;
-      gnome-terminal) expect="gnome-terminal -- /b/zellij-jolt" ;;
+      kitty) expect="kitty /b/zellij-jolt --raise" ;;
+      wezterm) expect="wezterm start -- /b/zellij-jolt --raise" ;;
+      ghostty) expect="ghostty -e /b/zellij-jolt --raise" ;;
+      foot) expect="foot /b/zellij-jolt --raise" ;;
+      gnome-terminal) expect="gnome-terminal -- /b/zellij-jolt --raise" ;;
     esac
     PATH="$d" run gnome_shortcut_command /b/zellij-jolt
     assert_success

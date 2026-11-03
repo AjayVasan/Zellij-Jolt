@@ -187,6 +187,25 @@ setup() {
   assert_output "rc=1"
 }
 
+@test "--raise opens the picker without a bell when stdout is not a tty" {
+  picker_main() { echo "PICKER"; }
+  run main --raise --dry-run
+  assert_success
+  assert_output "PICKER"
+  run main --raise
+  assert_success
+  assert_output "PICKER"
+}
+
+@test "--raise rings the bell once before the picker on a tty" {
+  command -v script >/dev/null || skip "util-linux script not available"
+  run env SHELL=/bin/bash script -qec "bash -c 'JOLT_NO_MAIN=1 source \"\$0\"; check_deps() { :; }; picker_main() { echo PICKER; }; main --raise' '$REPO/zellij-jolt.sh'" /dev/null
+  assert_success
+  [[ $output == *$'\a'PICKER* ]]
+  run env SHELL=/bin/bash script -qec "bash -c 'JOLT_NO_MAIN=1 source \"\$0\"; check_deps() { :; }; picker_main() { echo PICKER; }; main' '$REPO/zellij-jolt.sh'" /dev/null
+  [[ $output != *$'\a'* ]]
+}
+
 @test "startup pauses before the picker only when config warned" {
   picker_main() { echo "PICKER"; }
   _pause() { echo "PAUSED"; }

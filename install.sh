@@ -193,11 +193,13 @@ gsettings_register_shortcut() {
 # gnome_shortcut_command TARGET — the command line a GNOME shortcut should
 # run: TARGET wrapped in the first terminal emulator found (a shortcut has
 # no tty of its own, so a bare TARGET would start and exit at once).
+# TARGET gets --raise so a window auto-moved to another workspace still
+# asks for focus.
 # Order: alacritty, kitty, wezterm, ghostty, foot, gnome-terminal. Returns
 # 1 (no output) when none is on PATH.
 gnome_shortcut_command() {
     local q term
-    printf -v q '%q' "$1"
+    printf -v q '%q --raise' "$1"
     for term in alacritty kitty wezterm ghostty foot gnome-terminal; do
         command -v "$term" >/dev/null 2>&1 || continue
         case "$term" in
